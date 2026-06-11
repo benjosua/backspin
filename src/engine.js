@@ -15,6 +15,7 @@ import {
 import { DEBUG_MODE, debugFlags, randomSide, useGameStore } from './store.js';
 import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js';
 import { initAudio, playBounce, playCharge, playHit, playMenu, playNet } from './audio.js';
+import { predictBounceKick, resolvePlayerShot, solveSafeShot, solveShot } from '../shared/rally-core.js';
 
 const clamp = MathUtils.clamp;
 const rand = () => Math.random();
@@ -88,69 +89,6 @@ function otherSide(side) {
   return side === 'player' ? 'ai' : 'player';
 }
 
-function velocityToLandAt(ball, targetX, targetZ, flightTime, gravity, lateralAccel) {
-  return new Vector3(
-    (targetX - ball.x) / flightTime - lateralAccel * 0.5 * flightTime,
-    (TABLE.ballRadius - ball.y + gravity * 0.5 * flightTime * flightTime) / flightTime,
-    (targetZ - ball.z) / flightTime,
-  );
-}
-
-function clearsNet(ball, velocity, gravity) {
-  if (Math.abs(velocity.z) < 0.01) return false;
-  const t = (0 - ball.z) / velocity.z;
-  if (t <= 0) return true;
-  return ball.y + velocity.y * t - gravity * 0.5 * t * t > TABLE.netHeight + TABLE.ballRadius + 0.05;
-}
-
-function solveShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin) {
-  const gravity = 30 + topSpin * 11;
-  const lateralAccel = sideSpin * PHYSICS.magnus;
-  let time = flightTime;
-  for (let attempt = 0; attempt < 7; attempt += 1) {
-    const v = velocityToLandAt(ball, targetX, targetZ, time, gravity, lateralAccel);
-    if (clearsNet(ball, v, gravity)) return v;
-    time += 0.07;
-  }
-  return velocityToLandAt(ball, targetX, targetZ, time, gravity, lateralAccel);
-}
-
-function simulateFirstBounce(ball, velocity, topSpin, sideSpin, maxTime = 2.5) {
-  let x = ball.x;
-  let y = ball.y;
-  let z = ball.z;
-  let vx = velocity.x;
-  let vy = velocity.y;
-  let vz = velocity.z;
-  let elapsed = 0;
-  const dt = 0.02;
-  while (elapsed < maxTime) {
-    vx += sideSpin * PHYSICS.magnus * dt;
-    vy -= (30 + topSpin * 11) * dt;
-    x += vx * dt;
-    y += vy * dt;
-    z += vz * dt;
-    elapsed += dt;
-    if (vy < 0 && y <= TABLE.ballRadius) {
-      return { x, z, ok: Math.abs(x) <= TABLE.halfWidth - TABLE.ballRadius * 0.5 && Math.abs(z) <= TABLE.halfLength - TABLE.ballRadius * 0.5 };
-    }
-  }
-  return null;
-}
-
-// Player shots are re-solved until first bounce lands on table. Original name: iD.
-function solveSafeShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin) {
-  let x = targetX;
-  let z = targetZ;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const velocity = solveShot(ball, x, z, flightTime, topSpin, sideSpin);
-    if (simulateFirstBounce(ball, velocity, topSpin, sideSpin)?.ok) return velocity;
-    x *= 0.62;
-    z = Math.sign(z) * Math.min(Math.abs(z), TABLE.halfLength * (0.68 - attempt * 0.035));
-  }
-  return solveShot(ball, 0, Math.sign(targetZ) * TABLE.halfLength * 0.42, flightTime, topSpin * 0.55, sideSpin * 0.45);
-}
-
 export class GameEngine {
   constructor() {
     this.ball = new Vector3(0, 1, 4.5);
@@ -187,13 +125,14 @@ export class GameEngine {
     this.lastNdcY = 0;
     this.charging = false;
     this.charge = 0;
+    this.chargeStartedAt = 0;
     this.kTop = 0;
     this.usingKeys = false;
     this.keys = { l: false, r: false };
     this.movePID = null;
     this.pointerLocked = false;
     this.shadow = { x: 0, z: 0, op: 0, scale: 0.5 };
-    this.marker = { x: 0, z: 0, op: 0 };
+    this.marker = { x: 0, z: 0, kickX: 0, kickZ: 0, op: 0, spin: 0, side: 0, smash: 0 };
     this.netWobble = 0;
     this.netRotX = 0;
 
@@ -249,6 +188,7 @@ export class GameEngine {
     this.spin.side = 0;
     this.charge = 0;
     this.charging = false;
+    this.chargeStartedAt = 0;
     this.reactTimer = 0;
     this.ai.tell = 0;
     this.tellSounded = false;
@@ -373,21 +313,46 @@ export class GameEngine {
     let topSpin, sideSpin, targetX, targetZ;
     let error = 0;
     let power = 0;
+    let playerShot = null;
 
     if (isPlayer) {
       const play = this.paddle.play;
       power = this.charge;
-      const incomingSpeed = Math.hypot(this.vel.x, this.vel.z);
-      const incomingSpin = Math.abs(this.spin.side) + Math.max(this.spin.top, 0);
-      const counterPower = this.lastHitter === 'ai'
-        ? clamp((incomingSpeed - 7.2) * 0.045 + incomingSpin * 0.04 + (ball.z < -1.8 ? 0.08 : 0), 0, 1)
-        : 0;
       const flickX = Math.abs(this.pvx) > 0.9 ? this.pvx : this.pvx * 0.25;
       const flickY = Math.abs(this.pvy) > 0.9 ? this.pvy : this.pvy * 0.25;
-      sideSpin = clamp((flickX * CAMERA.cameraZBase + (this.player.vx / 9) * 0.5) * play.spin, -1, 1);
-      topSpin = clamp((flickY * CAMERA.cameraLookAhead + this.kTop) * play.spin, -1, 1);
-      targetX = clamp(offset * TABLE.halfWidth * 0.5 + sideSpin * TABLE.halfWidth * 0.28, -TABLE.halfWidth * 0.7, TABLE.halfWidth * 0.7);
-      error = (0.002 + Math.abs(offset) * 0.012 + power * PHYSICS.ballVisualRadius * 0.3 + Math.max(topSpin, 0) * 0.006) / play.control * (0.12 + counterPower * 0.88);
+      const now = typeof performance !== 'undefined' ? performance.now() / 1000 : 0;
+      const chargeHeldMs = this.chargeStartedAt ? Math.max(0, (now - this.chargeStartedAt) * 1000) : power * 500;
+      playerShot = resolvePlayerShot(
+        {
+          side: 'player',
+          ball: { x: ball.x, y: ball.y, z: ball.z },
+          incomingVelocity: { x: this.vel.x, y: this.vel.y, z: this.vel.z },
+          offset,
+          rally: this.rally,
+        },
+        {
+          charge: power,
+          chargeHeldMs,
+          charging: this.charging,
+          swipeX: flickX,
+          swipeY: flickY + this.kTop / CAMERA.cameraLookAhead,
+          paddleVx: this.player.vx,
+        },
+        {
+          spinScale: play.spin,
+          powerScale: play.power,
+          controlScale: play.control,
+          swipeTopScale: CAMERA.cameraLookAhead,
+          swipeSideScale: CAMERA.cameraZBase,
+          paddleSideScale: 0.5 / 9,
+          random: rand,
+        },
+      );
+      topSpin = playerShot.spin.top;
+      sideSpin = playerShot.spin.side;
+      targetX = playerShot.target.x;
+      targetZ = playerShot.target.z;
+      flightTime = playerShot.flightTime;
     } else {
       const bot = this.tier;
       const { scoreAI, scoreP } = useGameStore.getState();
@@ -421,18 +386,14 @@ export class GameEngine {
       error = bot.error * (1.25 - confidence * 0.5) + fatigue * 0.08;
     }
 
-    const smash = isPlayer ? highBall : this._aiSmash;
-    if (smash) {
+    const smash = isPlayer ? playerShot?.smash : this._aiSmash;
+    if (isPlayer && smash) power = Math.max(power, 0.85);
+    if (!isPlayer && smash) {
       topSpin = Math.max(topSpin, 0.2);
       flightTime = PHYSICS.spinDecay;
       targetZ = zDir * (0.72 + rand() * 0.2) * TABLE.halfLength;
       power = Math.max(power, 0.85);
-      if (isPlayer) {
-        flightTime = PHYSICS.paddleTilt;
-        targetX = clamp((this.ai.x >= 0 ? -1 : 1) * TABLE.halfWidth * 0.82 + (rand() - 0.5) * TABLE.halfWidth * 0.14, -TABLE.halfWidth * 0.92, TABLE.halfWidth * 0.92);
-        power = 1;
-      }
-    } else {
+    } else if (!isPlayer) {
       if (topSpin > 0) {
         flightTime *= 1 - topSpin * 0.24;
         targetZ = zDir * (0.58 + rand() * 0.32) * TABLE.halfLength;
@@ -446,13 +407,8 @@ export class GameEngine {
         flightTime = 0.92 + rand() * 0.16;
         targetZ = zDir * (0.5 + rand() * 0.16) * TABLE.halfLength;
       }
-      if (isPlayer && power > 0) {
-        flightTime *= 1 - power * PHYSICS.hitDepth;
-        targetZ = zDir * clamp(Math.abs(targetZ / TABLE.halfLength) + power * PHYSICS.paddleThickness * 0.55, 0.38, 0.82) * TABLE.halfLength;
-      }
     }
 
-    if (isPlayer) flightTime = clamp(flightTime / this.paddle.play.power, 0.16, 1.4);
     if (!isPlayer && this.tier.minDepth != null) {
       targetZ = zDir * Math.max(Math.abs(targetZ / TABLE.halfLength), this.tier.minDepth) * TABLE.halfLength;
       if (topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
@@ -460,7 +416,9 @@ export class GameEngine {
 
     this.spin.top = topSpin;
     this.spin.side = sideSpin;
-    const solved = isPlayer ? solveSafeShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin) : solveShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin);
+    const solved = isPlayer
+      ? new Vector3(playerShot.velocity.x, playerShot.velocity.y, playerShot.velocity.z)
+      : solveShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin);
     if (error > 0) {
       solved.x *= 1 + (rand() - 0.5) * 2 * error;
       solved.y *= 1 + (rand() - 0.5) * 2 * error;
@@ -483,6 +441,9 @@ export class GameEngine {
     if (smash) raiseFx('smash', 1);
     else if (power > 0.6) raiseFx('smash', 0.6 + power * 0.3);
     if (smash) this.setCallout('SMASH', color);
+    else if (isPlayer && playerShot?.intent === 'counter') this.setCallout('COUNTER', color);
+    else if (isPlayer && playerShot?.intent === 'lob') this.setCallout('LOB', color);
+    else if (isPlayer && playerShot?.intent === 'block') this.setCallout('BLOCK', color);
     else if (isPlayer && power > 0.72) this.setCallout('POWER', color);
 
     if (isPlayer) {
@@ -491,7 +452,7 @@ export class GameEngine {
       inputHud.spinX = sideSpin;
       inputHud.spinY = topSpin;
       inputHud.spinMag = Math.min(1, Math.hypot(sideSpin, topSpin));
-      inputHud.spinLabel = Math.abs(sideSpin) > 0.35 ? 'SIDESPIN' : topSpin > 0.3 ? 'TOPSPIN' : topSpin < -0.2 ? 'CHOP' : '';
+      inputHud.spinLabel = playerShot?.intent === 'lob' ? 'LOB' : playerShot?.intent === 'block' ? 'BLOCK' : Math.abs(sideSpin) > 0.35 ? 'SIDESPIN' : topSpin > 0.3 ? 'TOPSPIN' : topSpin < -0.2 ? 'CHOP' : '';
       this.reactTimer = this.tier.reactionDelay;
     } else {
       this.ai.tell = 0;
@@ -624,6 +585,7 @@ export class GameEngine {
         this.lastT = -1;
       }
       this.onPointerMove(event);
+      if (!this.charging) this.chargeStartedAt = event.timeStamp / 1000;
       this.charging = true;
     }
   }
@@ -644,7 +606,12 @@ export class GameEngine {
     if (event.code === 'ArrowRight' || event.code === 'KeyD') { this.keys.r = true; this.usingKeys = true; }
     if (event.code === 'ArrowUp' || event.code === 'KeyW') this.kTop = 0.85;
     if (event.code === 'ArrowDown' || event.code === 'KeyS') this.kTop = -0.7;
-    if (event.code === 'Space' || event.code === 'Enter') { initAudio(); this.charging = true; event.preventDefault(); }
+    if (event.code === 'Space' || event.code === 'Enter') {
+      initAudio();
+      if (!this.charging) this.chargeStartedAt = typeof performance !== 'undefined' ? performance.now() / 1000 : 0;
+      this.charging = true;
+      event.preventDefault();
+    }
   }
   onKeyUp(event) {
     if (event.code === 'ArrowLeft' || event.code === 'KeyA') this.keys.l = false;
@@ -797,16 +764,24 @@ export class GameEngine {
     this.shadow.scale = 0.5 + ball.y * 0.16;
 
     if (phase === 'rally' && this.lastHitter === 'ai' && !this.bouncedReceiver) {
-      const gravity = 30 + this.spin.top * 11;
-      const discriminant = this.vel.y * this.vel.y + gravity * 2 * (ball.y - TABLE.ballRadius);
-      if (discriminant > 0 && gravity > 0) {
-        const fallTime = (this.vel.y + Math.sqrt(discriminant)) / gravity;
-        this.marker.x = ball.x + this.vel.x * fallTime + this.spin.side * 0.5 * PHYSICS.magnus * fallTime * fallTime;
-        this.marker.z = ball.z + this.vel.z * fallTime;
+      this.marker.op = 0;
+      this.marker.spin = 0;
+      this.marker.smash = 0;
+      const prediction = predictBounceKick(ball, this.vel, this.spin);
+      if (prediction) {
+        this.marker.x = prediction.x;
+        this.marker.z = prediction.z;
+        this.marker.kickX = prediction.kickX;
+        this.marker.kickZ = prediction.kickZ;
+        this.marker.spin = prediction.spin;
+        this.marker.side = prediction.side;
+        this.marker.smash = prediction.smash;
         this.marker.op = Math.abs(this.marker.x) < TABLE.halfWidth && Math.abs(this.marker.z) < TABLE.halfLength ? 0.32 + Math.sin(time * 10) * 0.08 : 0;
       }
     } else {
       this.marker.op = 0;
+      this.marker.spin = 0;
+      this.marker.smash = 0;
     }
 
     this.netWobble = Math.max(0, this.netWobble - dt * 2.2);

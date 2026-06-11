@@ -1,8 +1,9 @@
 import { Room, Client } from "colyseus";
 import { RallyState } from "./schema/RallyState.js";
+import { TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveShot } from "../shared/rally-core.js";
 
-const TABLE = { halfLength: 4.75, halfWidth: 2.85, netHeight: 0.5, ballRadius: 0.12, bounceRestitution: 0.82 };
-const PHYSICS = { magnus: 7.5, speedScale: 1.9, curveScale: 1.7, serveHeight: 0.95, playerHeight: 1.2 };
+const TABLE = CORE_TABLE;
+const PHYSICS = { ...CORE_PHYSICS, serveHeight: 0.95 };
 const PADDLE_Z = { p1: 4.8, p2: -4.8 } as const;
 const PADDLE_Y = 0.62;
 const REACH = 0.95;
@@ -12,7 +13,7 @@ const PATCH_RATE = 1000 / 30;
 const ROOM_CODE_CHANNEL = "$rally_private_codes";
 
 type Side = "p1" | "p2";
-type Input = { targetX: number; targetY: number; vx: number; vy: number; charging: boolean; lastInputAt: number };
+type Input = { targetX: number; targetY: number; vx: number; vy: number; charging: boolean; chargeStartedAt: number; lastInputAt: number };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const other = (side: Side): Side => side === "p1" ? "p2" : "p1";
@@ -23,31 +24,6 @@ function makeCode() {
   return code;
 }
 function nowSeconds() { return Date.now() / 1000; }
-function velocityToLandAt(x: number, y: number, z: number, targetX: number, targetZ: number, time: number, gravity: number, lateralAccel: number) {
-  return {
-    x: (targetX - x) / time - lateralAccel * 0.5 * time,
-    y: (TABLE.ballRadius - y + gravity * 0.5 * time * time) / time,
-    z: (targetZ - z) / time,
-  };
-}
-function clearsNet(x: number, y: number, z: number, vx: number, vy: number, vz: number, gravity: number) {
-  if (Math.abs(vz) < 0.01) return false;
-  const t = -z / vz;
-  if (t <= 0) return true;
-  return y + vy * t - gravity * 0.5 * t * t > TABLE.netHeight + TABLE.ballRadius + 0.05;
-}
-function solveShot(x: number, y: number, z: number, targetX: number, targetZ: number, flightTime: number, topSpin: number, sideSpin: number) {
-  const gravity = 30 + topSpin * 11;
-  const lateralAccel = sideSpin * PHYSICS.magnus;
-  let time = flightTime;
-  for (let attempt = 0; attempt < 7; attempt += 1) {
-    const v = velocityToLandAt(x, y, z, targetX, targetZ, time, gravity, lateralAccel);
-    if (clearsNet(x, y, z, v.x, v.y, v.z, gravity)) return v;
-    time += 0.07;
-  }
-  return velocityToLandAt(x, y, z, targetX, targetZ, time, gravity, lateralAccel);
-}
-
 export class RallyRoom extends Room<{ state: RallyState }> {
   maxClients = 2;
   private inputs = new Map<string, Input>();
@@ -91,7 +67,7 @@ export class RallyRoom extends Room<{ state: RallyState }> {
     const side: Side = !this.state.p1 ? "p1" : "p2";
     if (side === "p1") this.state.p1 = client.sessionId;
     else this.state.p2 = client.sessionId;
-    this.inputs.set(client.sessionId, { targetX: 0, targetY: 0, vx: 0, vy: 0, charging: false, lastInputAt: 0 });
+    this.inputs.set(client.sessionId, { targetX: 0, targetY: 0, vx: 0, vy: 0, charging: false, chargeStartedAt: 0, lastInputAt: 0 });
     this.handleProfile(client, options || {});
     this.state.joined = this.clients.length;
     if (this.clients.length === 2) {
@@ -165,7 +141,9 @@ export class RallyRoom extends Room<{ state: RallyState }> {
   private handleCharge(client: Client, message: any) {
     const input = this.inputs.get(client.sessionId);
     if (!input) return;
-    input.charging = Boolean(message?.charging);
+    const charging = Boolean(message?.charging);
+    if (charging && !input.charging) input.chargeStartedAt = nowSeconds();
+    input.charging = charging;
   }
 
   private currentServer(): Side {
@@ -202,7 +180,7 @@ export class RallyRoom extends Room<{ state: RallyState }> {
     const sideSpin = clamp((input?.vx || 0) * 0.12, -0.8, 0.8);
     const targetX = clamp((Math.random() - 0.5) * TABLE.halfWidth * 0.55 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.75, TABLE.halfWidth * 0.75);
     const targetZ = zDir * (0.45 + Math.random() * 0.22) * TABLE.halfLength;
-    const v = solveShot(this.state.ballX, this.state.ballY, this.state.ballZ, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin);
+    const v = solveShot({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin);
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
     this.state.spinTop = top; this.state.spinSide = sideSpin;
     this.lastHitter = side;
@@ -212,26 +190,35 @@ export class RallyRoom extends Room<{ state: RallyState }> {
   }
 
   private hit(side: Side) {
-    const zDir = side === "p1" ? -1 : 1;
     const paddleX = side === "p1" ? this.state.p1X : this.state.p2X;
     const input = this.inputs.get(side === "p1" ? this.state.p1 : this.state.p2);
     const charge = side === "p1" ? this.state.p1Charge : this.state.p2Charge;
     const offset = clamp((this.state.ballX - paddleX) / REACH, -1, 1);
-    const highBall = this.state.ballY > PHYSICS.playerHeight;
     this.state.rally += 1;
-    const top = clamp((input?.vy || 0) * 0.16 + (highBall ? 0.35 : 0) + charge * 0.25, -1, 1);
-    const sideSpin = clamp((input?.vx || 0) * 0.14, -1, 1);
-    let flight = clamp(0.64 - this.state.rally * 0.012 - charge * 0.2, 0.34, 0.72);
-    if (highBall) flight = 0.28;
-    const targetX = clamp(offset * TABLE.halfWidth * 0.45 + sideSpin * TABLE.halfWidth * 0.3, -TABLE.halfWidth * 0.85, TABLE.halfWidth * 0.85);
-    const targetZ = zDir * (highBall ? 0.85 : 0.58 + Math.random() * 0.28) * TABLE.halfLength;
-    const v = solveShot(this.state.ballX, this.state.ballY, this.state.ballZ, targetX, targetZ, flight, top, sideSpin);
+    const shot = resolvePlayerShot(
+      {
+        side,
+        ball: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ },
+        incomingVelocity: { x: this.state.ballVx, y: this.state.ballVy, z: this.state.ballVz },
+        offset,
+        rally: this.state.rally,
+      },
+      {
+        charge,
+        chargeHeldMs: input?.charging ? Math.max(0, (nowSeconds() - input.chargeStartedAt) * 1000) : 0,
+        charging: Boolean(input?.charging),
+        swipeX: input?.vx || 0,
+        swipeY: input?.vy || 0,
+      },
+      { random: Math.random },
+    );
+    const v = shot.velocity;
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
-    this.state.spinTop = top; this.state.spinSide = sideSpin;
+    this.state.spinTop = shot.spin.top; this.state.spinSide = shot.spin.side;
     this.lastHitter = side;
     this.bouncedReceiver = false;
     if (side === "p1") this.state.p1Charge = 0; else this.state.p2Charge = 0;
-    this.broadcast("fx", { type: "hit", side, smash: highBall || charge > 0.7 });
+    this.broadcast("fx", { type: "hit", side, smash: shot.smash, intent: shot.intent });
   }
 
   private point(winner: Side, reason: string) {

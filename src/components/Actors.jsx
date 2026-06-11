@@ -14,6 +14,7 @@ import {
   Object3D,
   ShaderMaterial,
   Vector2,
+  Vector3,
 } from 'three';
 import { COLORS, CPU_PADDLE, getPaddle, PHYSICS, TABLE, TUNING } from '../constants.js';
 import { perfSettings } from '../performance.js';
@@ -567,6 +568,10 @@ export function Actors() {
   const effects = useRef(null);
   const shadow = useRef(null);
   const marker = useRef(null);
+  const markerKick = useRef(null);
+  const markerArrow = useRef(null);
+  const markerSpin = useRef(null);
+  const markerSmash = useRef(null);
   const visibleGroup = useRef(null);
   const visibleAmount = useRef(Number(DEBUG_MODE));
   const trailAmount = useRef(0);
@@ -737,6 +742,34 @@ export function Actors() {
       marker.current.position.set(activeGame.marker.x, 0.03, activeGame.marker.z);
       marker.current.material.opacity = activeGame.marker.op * fade;
     }
+    if (markerKick.current) {
+      markerKick.current.position.set(activeGame.marker.kickX, 0.034, activeGame.marker.kickZ);
+      markerKick.current.material.opacity = activeGame.marker.op * activeGame.marker.spin * fade * 0.9;
+      const kickScale = 0.8 + activeGame.marker.spin * 0.45;
+      markerKick.current.scale.set(kickScale, kickScale, 1);
+    }
+    if (markerArrow.current) {
+      const dx = activeGame.marker.kickX - activeGame.marker.x;
+      const dz = activeGame.marker.kickZ - activeGame.marker.z;
+      const distance = Math.hypot(dx, dz);
+      markerArrow.current.position.set(activeGame.marker.x + dx * 0.5, 0.036, activeGame.marker.z + dz * 0.5);
+      markerArrow.current.scale.set(1, Math.max(0.001, distance), 1);
+      if (distance > 0.001) markerArrow.current.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), new Vector3(dx, 0, dz).normalize());
+      markerArrow.current.material.opacity = activeGame.marker.op * activeGame.marker.spin * fade * 0.75;
+    }
+    if (markerSpin.current) {
+      markerSpin.current.position.set(activeGame.marker.x, 0.038, activeGame.marker.z);
+      markerSpin.current.rotation.z = now * (2.8 + activeGame.marker.spin * 5) * (activeGame.marker.side < 0 ? -1 : 1);
+      markerSpin.current.material.opacity = activeGame.marker.op * Math.max(activeGame.marker.spin, 0.35) * fade;
+      const spinScale = 1 + activeGame.marker.spin * 0.5;
+      markerSpin.current.scale.set(spinScale, spinScale, 1);
+    }
+    if (markerSmash.current) {
+      markerSmash.current.position.set(activeGame.marker.x, 0.04, activeGame.marker.z);
+      markerSmash.current.material.opacity = activeGame.marker.op * activeGame.marker.smash * fade * (0.7 + Math.sin(now * 18) * 0.25);
+      const smashScale = 1.1 + activeGame.marker.smash * 0.6 + Math.sin(now * 18) * 0.08;
+      markerSmash.current.scale.set(smashScale, smashScale, 1);
+    }
     if (net.current) net.current.rotation.x = activeGame.netRotX;
 
     updateCamera(camera, activeGame);
@@ -754,6 +787,22 @@ export function Actors() {
         <mesh ref={marker} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
           <ringGeometry args={[0.34, 0.42, 40]} />
           <meshBasicMaterial color={COLORS.player} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={markerKick} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.034, 0]}>
+          <ringGeometry args={[0.16, 0.22, 28]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={markerArrow} position={[0, 0.036, 0]}>
+          <cylinderGeometry args={[0.018, 0.018, 1, 8]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={markerSpin} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.038, 0]}>
+          <ringGeometry args={[0.48, 0.51, 48, 1, 0, Math.PI * 1.55]} />
+          <meshBasicMaterial color="#ff6a00" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={markerSmash} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
+          <ringGeometry args={[0.56, 0.62, 56]} />
+          <meshBasicMaterial color={COLORS.ai} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
         </mesh>
       </group>
       <Net ref={net} />

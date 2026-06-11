@@ -5,6 +5,7 @@ import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js
 import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
 import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
+import { predictBounceKick } from '../shared/rally-core.js';
 
 const clamp = MathUtils.clamp;
 const url = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
@@ -44,7 +45,7 @@ class NetworkGame {
     this.ballRotX = 0;
     this.ballRotY = 0;
     this.shadow = { x: 0, z: 0, op: 0, scale: 0.5 };
-    this.marker = { x: 0, z: 0, op: 0 };
+    this.marker = { x: 0, z: 0, kickX: 0, kickZ: 0, op: 0, spin: 0, side: 0, smash: 0 };
     this.netWobble = 0;
     this.netRotX = 0;
     this.shake = 0;
@@ -326,6 +327,22 @@ class NetworkGame {
     this.shadow.op = tableish ? clamp(0.45 - this.ball.y * 0.09, 0.1, 0.45) : 0;
     this.shadow.scale = 0.5 + this.ball.y * 0.16;
     this.marker.op = 0;
+    this.marker.spin = 0;
+    this.marker.smash = 0;
+    const incoming = store.phase === 'rally' && this.ball.z < PHYSICS.gravity && this.vel.z > 0;
+    if (incoming && this.ball.y > TABLE.ballRadius) {
+      const prediction = predictBounceKick(this.ball, this.vel, this.spin);
+      if (prediction) {
+        this.marker.x = prediction.x;
+        this.marker.z = prediction.z;
+        this.marker.kickX = prediction.kickX;
+        this.marker.kickZ = prediction.kickZ;
+        this.marker.spin = prediction.spin;
+        this.marker.side = prediction.side;
+        this.marker.smash = prediction.smash;
+        this.marker.op = Math.abs(this.marker.x) < TABLE.halfWidth && Math.abs(this.marker.z) < TABLE.halfLength ? 0.32 + Math.sin(time * 10) * 0.08 : 0;
+      }
+    }
     this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
     this.netRotX = Math.sin(time * 26) * this.netWobble * 0.1;
     arenaFx.heat = damp(arenaFx.heat, store.phase === 'rally' ? clamp(0.16 + (this.remoteState?.rally || 0) * 0.07, 0, 1) : 0, 2, dt);
