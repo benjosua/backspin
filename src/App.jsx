@@ -1,9 +1,9 @@
 // Recovered app root from production bundle function `bK`.
 
-import { Suspense, useEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Preload } from '@react-three/drei';
-import { DEBUG_MODE } from './store.js';
+import { DEBUG_MODE, useGameStore } from './store.js';
 import { CAMERA } from './constants.js';
 import { perfSettings, perfHudEnabled } from './performance.js';
 import { WorldBackground, Lights, EnvironmentModel, ArenaRings, TableModel, SkyWall, WallScoreboard } from './components/Scene.jsx';
@@ -13,6 +13,24 @@ import { Hud, IntroOverlay, PointerCursor, ModePicker } from './components/Hud.j
 import { Postprocessing } from './components/Postprocessing.jsx';
 import { DesktopOnlyGate } from './components/DesktopOnlyGate.jsx';
 import { useFrame, useThree } from '@react-three/fiber';
+
+const DebugPanel = DEBUG_MODE ? lazy(() => import('./components/DebugPanel.jsx')) : null;
+
+
+function SceneContent() {
+  return (
+    <>
+      <Lights />
+      <SkyWall />
+      <EnvironmentModel />
+      <ArenaRings />
+      <TableModel />
+      <Actors />
+      <WallScoreboard />
+      <IntroMenu3D />
+    </>
+  );
+}
 
 function PerformanceRuntime() {
   const { gl, setDpr } = useThree();
@@ -76,6 +94,8 @@ function PerformanceRuntime() {
 }
 
 export default function App() {
+  const debugRevision = useGameStore((state) => (DEBUG_MODE ? state.debugRevision : 0));
+
   return (
     <DesktopOnlyGate>
       <div className="app">
@@ -93,18 +113,16 @@ export default function App() {
         <PerformanceRuntime />
         <WorldBackground />
         <Suspense fallback={null}>
-          <Lights />
-          <SkyWall />
-          <EnvironmentModel />
-          <ArenaRings />
-          <TableModel />
-          <Actors />
-          <WallScoreboard />
-          <IntroMenu3D />
+          <SceneContent key={debugRevision} />
           <Postprocessing />
           <Preload all />
         </Suspense>
       </Canvas>
+      {DEBUG_MODE && DebugPanel && (
+        <Suspense fallback={null}>
+          <DebugPanel />
+        </Suspense>
+      )}
       {!DEBUG_MODE && <Hud />}
       {!DEBUG_MODE && <PointerCursor />}
       {!DEBUG_MODE && <ModePicker />}

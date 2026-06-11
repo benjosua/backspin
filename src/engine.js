@@ -37,6 +37,9 @@ export const inputHud = {
   spinY: 0,
   spinMag: 0,
   spinLabel: '',
+  aimX: 0,
+  aimDepth: 0.5,
+  aimLabel: '',
   rally: 0,
   callout: '',
   calloutT: 0,
@@ -55,6 +58,9 @@ export function resetInputHud() {
   inputHud.spinY = 0;
   inputHud.spinMag = 0;
   inputHud.spinLabel = '';
+  inputHud.aimX = 0;
+  inputHud.aimDepth = 0.5;
+  inputHud.aimLabel = '';
   inputHud.rally = 0;
   inputHud.callout = '';
   inputHud.calloutT = 0;
@@ -116,6 +122,8 @@ export class GameEngine {
     this._lob = false;
     this._aiSmash = false;
     this.inputX = 0;
+    this.aimX = 0;
+    this.aimDepth = 0.5;
     this.ndcX = 0;
     this.ndcY = 0;
     this.pvx = 0;
@@ -133,6 +141,7 @@ export class GameEngine {
     this.pointerLocked = false;
     this.shadow = { x: 0, z: 0, op: 0, scale: 0.5 };
     this.marker = { x: 0, z: 0, kickX: 0, kickZ: 0, op: 0, spin: 0, side: 0, smash: 0 };
+    this.aim = { x: 0, z: 0, op: 0, spinX: 0, spinY: 0, power: 0 };
     this.netWobble = 0;
     this.netRotX = 0;
 
@@ -259,8 +268,10 @@ export class GameEngine {
     if (isPlayer) {
       topSpin = clamp((this.pvy * CAMERA.cameraLookAhead + this.kTop) * play.spin, -0.8, 0.8);
       sideSpin = clamp(this.pvx * CAMERA.cameraZBase * play.spin, -0.8, 0.8);
-      targetX = clamp((rand() - 0.5) * TABLE.halfWidth * 0.45 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.62, TABLE.halfWidth * 0.62);
-      targetZ = zDir * (0.4 + rand() * 0.2) * TABLE.halfLength;
+      const aimX = this.aimX;
+      const aimDepth = this.aimDepth;
+      targetX = clamp(aimX * TABLE.halfWidth * 0.96 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.98, TABLE.halfWidth * 0.98);
+      targetZ = zDir * (0.08 + aimDepth * 0.88) * TABLE.halfLength;
       flightTime = ((1 - charge * 0.25) * 0.72) / play.power;
     } else {
       const bot = this.tier;
@@ -337,6 +348,8 @@ export class GameEngine {
           swipeX: flickX,
           swipeY: flickY + this.kTop / CAMERA.cameraLookAhead,
           paddleVx: this.player.vx,
+          aimX: this.aimX,
+          aimDepth: this.aimDepth,
         },
         {
           spinScale: play.spin,
@@ -628,11 +641,17 @@ export class GameEngine {
     dt = clampDt(dt);
     const state = useGameStore.getState();
     if (debugFlags.forceOver) {
+      const forced = debugFlags.forceOver;
+      const winner = typeof forced === 'object' ? forced.winner : forced;
       this.overT = 0;
       this.volley = 0;
+      if (winner === 'player' || winner === 'ai') {
+        state.setPhase('over');
+        state.setWinner(winner);
+      }
       debugFlags.forceOver = null;
     }
-    if (DEBUG_MODE || !state.started) {
+    if (!state.started) {
       this.idle(dt, time, camera);
       return;
     }
@@ -674,6 +693,9 @@ export class GameEngine {
       }
     }
 
+    this.aimX = clamp(this.inputX / (TABLE.halfWidth + 0.5), -1, 1);
+    this.aimDepth = clamp((this.ndcY + this.kTop * 0.7 + 1) * 0.5, 0, 1);
+
     player.x = damp(player.x, this.inputX, this.paddle.play.follow * 16, dt);
     player.vx = (player.x - player.prevX) / Math.max(dt, 0.000001);
     this.updateAI(dt, phase);
@@ -697,7 +719,15 @@ export class GameEngine {
     inputHud.charge = this.charge;
     inputHud.charging = this.charging && canCharge;
     inputHud.rally = this.rally;
-    if (inputHud.spinMag > 0) inputHud.spinMag = Math.max(0, inputHud.spinMag - dt * 1.2);
+    inputHud.aimX = this.aimX;
+    inputHud.aimDepth = this.aimDepth;
+    inputHud.aimLabel = `${this.aimX < -0.25 ? 'LEFT' : this.aimX > 0.25 ? 'RIGHT' : 'CENTER'} · ${this.aimDepth < 0.35 ? 'SHORT' : this.aimDepth > 0.7 ? 'DEEP' : 'MID'}`;
+    if (inputHud.charging) {
+      inputHud.spinX = clamp(this.pvx * 0.12, -1, 1);
+      inputHud.spinY = clamp((this.pvy + this.kTop) * 0.12, -1, 1);
+      inputHud.spinMag = Math.min(1, Math.hypot(inputHud.spinX, inputHud.spinY));
+      inputHud.spinLabel = Math.abs(inputHud.spinX) > 0.35 ? 'SIDESPIN' : inputHud.spinY > 0.3 ? 'TOPSPIN' : inputHud.spinY < -0.2 ? 'CHOP' : '';
+    } else if (inputHud.spinMag > 0) inputHud.spinMag = Math.max(0, inputHud.spinMag - dt * 1.2);
 
     for (const racket of [player, ai]) {
       const who = racket.who;
@@ -762,6 +792,13 @@ export class GameEngine {
     this.shadow.z = ball.z;
     this.shadow.op = tableish ? clamp(0.45 - ball.y * 0.09, 0.1, 0.45) : 0;
     this.shadow.scale = 0.5 + ball.y * 0.16;
+    const aiming = phase === 'rally' || (phase === 'serve' && server === 'player');
+    this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
+    this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
+    this.aim.op = aiming ? clamp(0.12 + this.charge * 0.6, 0, 0.78) : 0;
+    this.aim.spinX = clamp(this.pvx * 0.12, -1, 1);
+    this.aim.spinY = clamp((this.pvy + this.kTop) * 0.12, -1, 1);
+    this.aim.power = this.charge;
 
     if (phase === 'rally' && this.lastHitter === 'ai' && !this.bouncedReceiver) {
       this.marker.op = 0;

@@ -27,6 +27,7 @@ export const useGameStore = create((set, get) => ({
   networkError: '',
   roomCode: '',
   onlineSide: null,
+  debugRevision: 0,
 
   reveal: () => set({ revealed: true }),
 
@@ -129,6 +130,7 @@ export const useGameStore = create((set, get) => ({
   toggleMenu: () => set((state) => ({ menuOpen: !state.menuOpen })),
   openMenu: () => set({ menuOpen: true }),
   closeMenu: () => set({ menuOpen: false }),
+  bumpDebugRevision: () => set((state) => ({ debugRevision: state.debugRevision + 1 })),
 }));
 
 export const randomSide = () => (Math.random() < 0.5 ? 'player' : 'ai');

@@ -24,6 +24,7 @@ export function ChargeDial() {
   const label = useRef(null);
   const dial = useRef(null);
   const callout = useRef(null);
+  const aim = useRef(null);
 
   useEffect(() => {
     let raf = 0;
@@ -49,6 +50,11 @@ export function ChargeDial() {
         callout.current.style.opacity = inputHud.calloutT > 0 ? Math.min(1, t * 2.4) : 0;
         callout.current.style.transform = `translate(-50%,-50%) scale(${1 + (1 - t) * 0.14})`;
       }
+      if (aim.current) {
+        const spin = Math.hypot(inputHud.spinX, inputHud.spinY);
+        aim.current.textContent = `AIM ${inputHud.aimLabel || 'CENTER · MID'} · SPIN ${Math.round(spin * 100)} · POWER ${Math.round(inputHud.charge * 100)}`;
+        aim.current.style.opacity = inputHud.charging ? 0.95 : 0.35;
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -65,6 +71,7 @@ export function ChargeDial() {
         <span ref={dot} className="dial-dot" />
         <span ref={label} className="dial-label">SPIN</span>
       </div>
+      <div className="aim-readout" ref={aim}>AIM CENTER · MID · SPIN 0 · POWER 0</div>
       <div className="callout" ref={callout} />
     </>
   );
@@ -229,7 +236,7 @@ export function Hud() {
             </div>
           )}
           <ChargeDial />
-          {firstServe && <div className="hint">HOLD&nbsp;CHARGE&nbsp;·&nbsp;FLICK&nbsp;SPIN&nbsp;·&nbsp;HIT&nbsp;HIGH&nbsp;TO&nbsp;SMASH</div>}
+          {firstServe && <div className="hint">MOVE&nbsp;TO&nbsp;AIM&nbsp;·&nbsp;HOLD&nbsp;CHARGE&nbsp;·&nbsp;FLICK&nbsp;SPIN</div>}
           {!isCoarsePointer && phase !== 'over' && !menuOpen && (
             <div className="esc-hint" aria-hidden>
               <kbd>ESC</kbd>
@@ -259,9 +266,10 @@ export function Hud() {
           <h3>{started ? 'PAUSED' : 'CONTROLS'}</h3>
           <ul>
             <li><b>Move</b><span>{isCoarsePointer ? 'Drag' : 'Mouse · A / D'}</span></li>
+            <li><b>Aim landing</b><span>{isCoarsePointer ? 'Move across table' : 'Mouse X/Y across table'}</span></li>
             <li><b>Charge power</b><span>{isCoarsePointer ? 'Hold' : 'Hold mouse · Space'}</span></li>
             <li><b>Spin</b><span>{isCoarsePointer ? 'Flick at contact' : 'Flick at contact · W / S'}</span></li>
-            <li><b>Smash</b><span>Hit a high ball</span></li>
+            <li><b>Smash</b><span>Charge a high ball</span></li>
             <li><b>Serve</b><span>Release</span></li>
             {!isCoarsePointer && <li><b>Pause · back</b><span>Esc</span></li>}
           </ul>

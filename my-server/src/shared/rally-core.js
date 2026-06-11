@@ -133,6 +133,10 @@ export function resolvePlayerShot(context, input, options = {}) {
   const swipeSideScale = options.swipeSideScale ?? 0.14;
   const paddleSideScale = options.paddleSideScale ?? 0;
   const random = options.random || Math.random;
+  const hasAimX = Number.isFinite(input.aimX);
+  const hasAimDepth = Number.isFinite(input.aimDepth);
+  const aimX = clamp(input.aimX || 0, -1, 1);
+  const aimDepth = clamp(input.aimDepth ?? 0.5, 0, 1);
 
   let topSpin = clamp((input.swipeY || 0) * swipeTopScale + charge * 0.2, -1, 1) * spinScale;
   let sideSpin = clamp((input.swipeX || 0) * swipeSideScale + (input.paddleVx || 0) * paddleSideScale, -1, 1) * spinScale;
@@ -143,6 +147,9 @@ export function resolvePlayerShot(context, input, options = {}) {
   let depth = 0.58 + random() * 0.24;
   let width = 0.45;
   let control = 0.3 / controlScale;
+  let placementWidth = 0.96;
+  let minDepth = 0.08;
+  let maxDepth = 0.96;
 
   if (intent === 'smash') {
     topSpin = Math.max(topSpin, 0.35);
@@ -150,12 +157,18 @@ export function resolvePlayerShot(context, input, options = {}) {
     depth = 0.82;
     width = 0.34;
     control = 0.18 / controlScale;
+    placementWidth = 0.9;
+    minDepth = 0.45;
+    maxDepth = 0.96;
   } else if (intent === 'counter') {
     topSpin = Math.max(topSpin, 0.25);
     flightTime = 0.46 / powerScale;
     depth = 0.74;
     width = 0.38;
     control = 0.2 / controlScale;
+    placementWidth = 0.92;
+    minDepth = 0.36;
+    maxDepth = 0.96;
   } else if (intent === 'lob') {
     topSpin = -0.35 * spinScale;
     sideSpin *= 0.5;
@@ -163,12 +176,18 @@ export function resolvePlayerShot(context, input, options = {}) {
     depth = 0.54;
     width = 0.25;
     control = 0.12 / controlScale;
+    placementWidth = 0.9;
+    minDepth = 0.18;
+    maxDepth = 0.92;
   } else if (intent === 'chop') {
     topSpin = clamp(topSpin - 0.45 * spinScale, -0.8, -0.2);
     flightTime = 0.74;
     depth = 0.44;
     width = 0.34;
     control = 0.18 / controlScale;
+    placementWidth = 0.9;
+    minDepth = 0.08;
+    maxDepth = 0.7;
   } else if (intent === 'block') {
     topSpin *= 0.35;
     sideSpin *= 0.35;
@@ -176,11 +195,18 @@ export function resolvePlayerShot(context, input, options = {}) {
     depth = 0.48;
     width = 0.28;
     control = 0.12 / controlScale;
+    placementWidth = 0.78;
+    minDepth = 0.08;
+    maxDepth = 0.7;
   } else if (intent === 'topspin') {
     topSpin = Math.max(topSpin, 0.25);
     flightTime *= 0.9;
     depth = 0.68;
+    minDepth = 0.25;
+    maxDepth = 0.96;
   }
+
+  if (hasAimDepth) depth = minDepth + (maxDepth - minDepth) * aimDepth;
 
   if (timing === 'weak') {
     flightTime = Math.max(flightTime, 0.68);
@@ -188,16 +214,22 @@ export function resolvePlayerShot(context, input, options = {}) {
     topSpin *= 0.7;
     sideSpin *= 0.7;
     control *= 0.6;
+    placementWidth *= 0.82;
   } else if (timing === 'bad') {
     flightTime = Math.max(flightTime, 0.78);
     depth = Math.min(depth, 0.46);
     topSpin *= 0.45;
     sideSpin *= 0.45;
     control *= 0.45;
+    placementWidth *= 0.65;
   }
 
   flightTime = clamp(flightTime, 0.38, 1.4);
-  const targetX = clamp(offset * TABLE.halfWidth * width + sideSpin * TABLE.halfWidth * control, -TABLE.halfWidth * 0.85, TABLE.halfWidth * 0.85);
+  const targetX = clamp(
+    (hasAimX ? aimX * TABLE.halfWidth * placementWidth : offset * TABLE.halfWidth * width) + sideSpin * TABLE.halfWidth * control,
+    -TABLE.halfWidth * 0.98,
+    TABLE.halfWidth * 0.98,
+  );
   const targetZ = zDir * depth * TABLE.halfLength;
   const velocity = solveSafeShot(context.ball, targetX, targetZ, flightTime, topSpin, sideSpin);
 

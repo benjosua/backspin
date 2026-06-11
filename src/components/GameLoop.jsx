@@ -3,6 +3,7 @@
 import { useFrame } from '@react-three/fiber';
 import { Vector3 } from 'three';
 import { game } from '../engine.js';
+import { getDebugTime } from '../debug-tuning.js';
 import { useGameStore } from '../store.js';
 
 const lookAt = new Vector3();
@@ -16,7 +17,7 @@ export function GameLoop() {
       game.newMatch();
     }
 
-    game.update(delta, state.clock.elapsedTime, state.camera);
+    game.update(delta, getDebugTime(state.clock.elapsedTime), state.camera);
 
     state.camera.position.set(game.camX, game.camY, game.camZ);
     lookAt.set(game.camLX, game.camLY, game.camLZ);

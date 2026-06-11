@@ -19,6 +19,7 @@ import {
 import { COLORS, CPU_PADDLE, getPaddle, PHYSICS, TABLE, TUNING } from '../constants.js';
 import { perfSettings } from '../performance.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
+import { getDebugTime } from '../debug-tuning.js';
 import { game, inputHud } from '../engine.js';
 import { networkGame } from '../network.js';
 import { DEBUG_MODE, useGameStore } from '../store.js';
@@ -394,7 +395,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
   }), [confettiPalette, confettiState, impactState, ringState, shockState, sparkleState]);
 
   useFrame((_, delta) => {
-    const dt = Math.min(delta, 0.033);
+    const dt = clampDt(delta);
     for (let i = 0; i < sparkleCount; i += 1) {
       const state = sparkleState[i];
       const sprite = sparkles.current[i];
@@ -572,6 +573,9 @@ export function Actors() {
   const markerArrow = useRef(null);
   const markerSpin = useRef(null);
   const markerSmash = useRef(null);
+  const aimMarker = useRef(null);
+  const aimPulse = useRef(null);
+  const aimSpin = useRef(null);
   const visibleGroup = useRef(null);
   const visibleAmount = useRef(Number(DEBUG_MODE));
   const trailAmount = useRef(0);
@@ -664,9 +668,9 @@ export function Actors() {
 
   useFrame((state, delta) => {
     const activeGame = useGameStore.getState().mode === 'online' ? networkGame : game;
-    activeGame.update(delta, state.clock.elapsedTime, camera, effects.current);
+    activeGame.update(delta, getDebugTime(state.clock.elapsedTime), camera, effects.current);
 
-    const now = state.clock.elapsedTime;
+    const now = getDebugTime(state.clock.elapsedTime);
     const active = DEBUG_MODE || useGameStore.getState().started;
     const fade = visibleAmount.current = damp(visibleAmount.current, Number(active), active ? 7 : 12, clampDt(delta));
     if (visibleGroup.current) visibleGroup.current.visible = fade > 0.01;
@@ -770,6 +774,21 @@ export function Actors() {
       const smashScale = 1.1 + activeGame.marker.smash * 0.6 + Math.sin(now * 18) * 0.08;
       markerSmash.current.scale.set(smashScale, smashScale, 1);
     }
+    if (aimMarker.current) {
+      const aim = activeGame.aim || { x: 0, z: 0, op: 0, spinX: 0, spinY: 0, power: 0 };
+      aimMarker.current.position.set(aim.x, 0.048, aim.z);
+      aimMarker.current.material.opacity = aim.op * fade;
+      const aimScale = 0.85 + aim.power * 0.5;
+      aimMarker.current.scale.set(aimScale, aimScale, 1);
+      aimPulse.current.position.set(aim.x, 0.049, aim.z);
+      aimPulse.current.material.opacity = aim.op * fade * (0.45 + Math.sin(now * 12) * 0.18);
+      aimPulse.current.scale.set(aimScale * (1.15 + aim.power * 0.35), aimScale * (1.15 + aim.power * 0.35), 1);
+      const spinMag = Math.min(1, Math.hypot(aim.spinX, aim.spinY));
+      aimSpin.current.position.set(aim.x + aim.spinX * 0.45, 0.052, aim.z - aim.spinY * 0.45);
+      aimSpin.current.material.opacity = aim.op * spinMag * fade;
+      const spinScale = 0.5 + spinMag * 0.7;
+      aimSpin.current.scale.set(spinScale, spinScale, 1);
+    }
     if (net.current) net.current.rotation.x = activeGame.netRotX;
 
     updateCamera(camera, activeGame);
@@ -803,6 +822,18 @@ export function Actors() {
         <mesh ref={markerSmash} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
           <ringGeometry args={[0.56, 0.62, 56]} />
           <meshBasicMaterial color={COLORS.ai} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={aimMarker} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.048, 0]}>
+          <ringGeometry args={[0.26, 0.34, 44]} />
+          <meshBasicMaterial color="#4de6ff" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={aimPulse} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.049, 0]}>
+          <ringGeometry args={[0.42, 0.46, 44]} />
+          <meshBasicMaterial color="#4de6ff" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={aimSpin} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.052, 0]}>
+          <ringGeometry args={[0.1, 0.14, 24]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
         </mesh>
       </group>
       <Net ref={net} />

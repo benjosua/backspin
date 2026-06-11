@@ -46,6 +46,7 @@ class NetworkGame {
     this.ballRotY = 0;
     this.shadow = { x: 0, z: 0, op: 0, scale: 0.5 };
     this.marker = { x: 0, z: 0, kickX: 0, kickZ: 0, op: 0, spin: 0, side: 0, smash: 0 };
+    this.aim = { x: 0, z: 0, op: 0, spinX: 0, spinY: 0, power: 0 };
     this.netWobble = 0;
     this.netRotX = 0;
     this.shake = 0;
@@ -62,6 +63,8 @@ class NetworkGame {
     this.charging = false;
     this.charge = 0;
     this.inputX = 0;
+    this.aimX = 0;
+    this.aimDepth = 0.5;
     this.usingKeys = false;
     this.keys = { l: false, r: false };
     this.pointerLocked = false;
@@ -281,6 +284,8 @@ class NetworkGame {
       const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
       this.inputX = clamp(this.inputX + dir * 10 * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
     }
+    this.aimX = clamp(this.inputX / (TABLE.halfWidth + 0.5), -1, 1);
+    this.aimDepth = clamp((this.ndcY + this.kTop * 0.7 + 1) * 0.5, 0, 1);
     this.pvx = damp(this.pvx, 0, 9, dt);
     this.pvy = damp(this.pvy, 0, 9, dt);
     this.kTop = damp(this.kTop, 0, 6, dt);
@@ -288,7 +293,9 @@ class NetworkGame {
     if (this.room && now - this.lastSend > 33) {
       this.lastSend = now;
       const serverX = this.side === 'p2' ? -this.inputX : this.inputX;
-      const payload = { x: serverX, y: this.ndcY, vx: this.pvx, vy: this.pvy + this.kTop };
+      const serverAimX = this.side === 'p2' ? -this.aimX : this.aimX;
+      const aimY = clamp(this.ndcY + this.kTop * 0.7, -1, 1);
+      const payload = { x: serverX, y: aimY, aimX: serverAimX, aimDepth: this.aimDepth, vx: this.pvx, vy: this.pvy + this.kTop };
       this.room.send('input', payload);
     }
     const paddleEase = 1 - Math.exp(-26 * dt);
@@ -307,6 +314,9 @@ class NetworkGame {
 
     inputHud.charge = this.charge;
     inputHud.charging = this.charging;
+    inputHud.aimX = this.aimX;
+    inputHud.aimDepth = this.aimDepth;
+    inputHud.aimLabel = `${this.aimX < -0.25 ? 'LEFT' : this.aimX > 0.25 ? 'RIGHT' : 'CENTER'} · ${this.aimDepth < 0.35 ? 'SHORT' : this.aimDepth > 0.7 ? 'DEEP' : 'MID'}`;
     inputHud.spinX = clamp(this.pvx * 0.12, -1, 1);
     inputHud.spinY = clamp((this.pvy + this.kTop) * 0.12, -1, 1);
     inputHud.spinMag = Math.min(1, Math.hypot(inputHud.spinX, inputHud.spinY));
@@ -326,6 +336,13 @@ class NetworkGame {
     this.shadow.z = this.ball.z;
     this.shadow.op = tableish ? clamp(0.45 - this.ball.y * 0.09, 0.1, 0.45) : 0;
     this.shadow.scale = 0.5 + this.ball.y * 0.16;
+    const aiming = store.phase === 'rally' || (store.phase === 'serve' && store.server === 'player');
+    this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
+    this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
+    this.aim.op = aiming ? clamp(0.12 + this.charge * 0.6, 0, 0.78) : 0;
+    this.aim.spinX = inputHud.spinX;
+    this.aim.spinY = inputHud.spinY;
+    this.aim.power = this.charge;
     this.marker.op = 0;
     this.marker.spin = 0;
     this.marker.smash = 0;

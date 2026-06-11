@@ -6,6 +6,7 @@ import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AdditiveBlending, CanvasTexture, Color, ShaderMaterial, Vector2 } from 'three';
 import { BOTS, PADDLES, TUNING } from '../constants.js';
+import { getDebugTime } from '../debug-tuning.js';
 import { clampDt, damp } from '../fx-state.js';
 import { initAudio, playCharge } from '../audio.js';
 import { useGameStore } from '../store.js';
@@ -142,7 +143,7 @@ function Title({ stage }) {
   const ref = useRef(null);
   const color = useMemo(() => new Color(), []);
   useFrame((state) => {
-    const t = state.clock.elapsedTime;
+    const t = getDebugTime(state.clock.elapsedTime);
     const config = TUNING.menu;
     const amount = clamp01(stageIn(stage.current, 0, 0.16));
     const node = ref.current;
@@ -268,7 +269,7 @@ function PaddleChoice({ paddle, index, stage, selected, onPick }) {
 
   useFrame((state, delta) => {
     const dt = clampDt(delta);
-    const time = state.clock.elapsedTime;
+    const time = getDebugTime(state.clock.elapsedTime);
     const stateRef = anim.current;
     stateRef.sel = damp(stateRef.sel, Number(selected), 10, dt);
     stateRef.hov = damp(stateRef.hov, Number(hover), 12, dt);
@@ -384,7 +385,7 @@ function PaddleHalo({ stage }) {
 
   useFrame((clock, delta) => {
     const dt = clampDt(delta);
-    const time = clock.clock.elapsedTime;
+    const time = getDebugTime(clock.clock.elapsedTime);
     const { paddle } = useGameStore.getState();
     const index = Math.max(0, PADDLES.findIndex((item) => item.id === paddle));
     const color = PADDLES[index].colors.edge;
@@ -436,7 +437,7 @@ function StartButton({ stage, onStart }) {
 
   useFrame((state, delta) => {
     const dt = clampDt(delta);
-    const time = state.clock.elapsedTime;
+    const time = getDebugTime(state.clock.elapsedTime);
     const amount = clamp01(stageIn(stage.current, 0.62, 0));
     const node = group.current;
     if (!node) return;

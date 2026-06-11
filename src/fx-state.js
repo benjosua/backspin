@@ -1,7 +1,9 @@
 // Recovered transient arena/FX state. Original bundle name: IT.
 
+import { getDebugTimeScale } from './debug-tuning.js';
+
 export const MAX_DT = 0.033;
-export const clampDt = (dt) => Math.min(dt, MAX_DT);
+export const clampDt = (dt) => Math.min(dt * getDebugTimeScale(), MAX_DT);
 
 // Exponential smoothing used throughout bundle. Original name: FT.
 export function damp(current, target, lambda, dt) {

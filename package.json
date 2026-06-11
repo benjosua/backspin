@@ -17,6 +17,7 @@
     "@react-three/fiber": "latest",
     "@react-three/postprocessing": "^3.0.4",
     "@vitejs/plugin-react": "latest",
+    "leva": "^0.10.1",
     "postprocessing": "^6.39.1",
     "react": "latest",
     "react-dom": "latest",

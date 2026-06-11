@@ -10,6 +10,7 @@ import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { useGameStore } from '../store.js';
 import { BOTS, TABLE, TUNING } from '../constants.js';
 import { skyFragmentShader, skyVertexShader } from '../shaders.js';
+import { getDebugTime } from '../debug-tuning.js';
 
 const ktx2Loader = new KTX2Loader().setTranscoderPath('/basis/');
 const tableUrl = '/table-baked.glb';
@@ -43,6 +44,14 @@ export function WorldBackground() {
       scene.fog.density = TUNING.world.fogDensity;
     }
   }, [scene]);
+
+  useFrame(() => {
+    scene.background?.set?.(TUNING.world.background);
+    if (scene.fog) {
+      scene.fog.color.set(TUNING.world.fog);
+      scene.fog.density = TUNING.world.fogDensity;
+    }
+  });
 
   return (
     <>
@@ -234,7 +243,7 @@ export function TableModel() {
     if (glow.current) {
       const target = Math.min(0.85, config.baseGlow * 0.12 + heat * config.heatGlow * 0.5 + flash * config.flashGlow * 0.5);
       glow.current.opacity = damp(glow.current.opacity, target, 10, dt);
-      tableTmp.copy(tableGlow).lerp(tableHot, Math.min(1, heat * 0.7 + smash * 0.5));
+      tableTmp.set(config.emissive).lerp(tableHot.set(config.hot), Math.min(1, heat * 0.7 + smash * 0.5));
       glow.current.color.lerp(tableTmp, 1 - Math.exp(dt * -10));
     }
 
@@ -387,7 +396,7 @@ export function WallScoreboard() {
     const labelY = scoreY - config.scoreFontSize * 0.52 - config.labelPad - config.labelFontSize * 0.5;
     const labelZ = scoreZ + 0.012;
     const { server } = useGameStore.getState();
-    const breathe = 1 + Math.sin(state.clock.elapsedTime * 0.7) * config.breatheAmp + arenaFx.heat * config.breatheHeat;
+    const breathe = 1 + Math.sin(getDebugTime(state.clock.elapsedTime) * 0.7) * config.breatheAmp + arenaFx.heat * config.breatheHeat;
     const playerPop = memory.side === 1 ? memory.score : 0;
     const cpuPop = memory.side === -1 ? memory.score : 0;
 
@@ -493,7 +502,7 @@ export function SkyWall() {
   }), []);
 
   useFrame((state) => {
-    material.uniforms.uTime.value = state.clock.elapsedTime;
+    material.uniforms.uTime.value = getDebugTime(state.clock.elapsedTime);
     material.uniforms.uZenith.value.set(TUNING.sky.zenith);
     material.uniforms.uEdge.value.set(TUNING.sky.edge);
     material.uniforms.uHorizon.value = TUNING.sky.horizon;

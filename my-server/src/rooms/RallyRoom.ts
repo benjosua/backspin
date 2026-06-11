@@ -13,7 +13,7 @@ const PATCH_RATE = 1000 / 30;
 const ROOM_CODE_CHANNEL = "$rally_private_codes";
 
 type Side = "p1" | "p2";
-type Input = { targetX: number; targetY: number; vx: number; vy: number; charging: boolean; chargeStartedAt: number; lastInputAt: number };
+type Input = { targetX: number; targetY: number; aimX: number; aimDepth: number; vx: number; vy: number; charging: boolean; chargeStartedAt: number; lastInputAt: number };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const other = (side: Side): Side => side === "p1" ? "p2" : "p1";
@@ -67,7 +67,7 @@ export class RallyRoom extends Room<{ state: RallyState }> {
     const side: Side = !this.state.p1 ? "p1" : "p2";
     if (side === "p1") this.state.p1 = client.sessionId;
     else this.state.p2 = client.sessionId;
-    this.inputs.set(client.sessionId, { targetX: 0, targetY: 0, vx: 0, vy: 0, charging: false, chargeStartedAt: 0, lastInputAt: 0 });
+    this.inputs.set(client.sessionId, { targetX: 0, targetY: 0, aimX: 0, aimDepth: 0.5, vx: 0, vy: 0, charging: false, chargeStartedAt: 0, lastInputAt: 0 });
     this.handleProfile(client, options || {});
     this.state.joined = this.clients.length;
     if (this.clients.length === 2) {
@@ -134,6 +134,8 @@ export class RallyRoom extends Room<{ state: RallyState }> {
     input.lastInputAt = t;
     input.targetX = clamp(Number(message?.x) || 0, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
     input.targetY = clamp(Number(message?.y) || 0, -1, 1);
+    input.aimX = clamp(Number.isFinite(message?.aimX) ? Number(message.aimX) : input.targetX / TABLE.halfWidth, -1, 1);
+    input.aimDepth = clamp(Number.isFinite(message?.aimDepth) ? Number(message.aimDepth) : (input.targetY + 1) * 0.5, 0, 1);
     input.vx = clamp(Number(message?.vx) || 0, -8, 8);
     input.vy = clamp(Number(message?.vy) || 0, -8, 8);
   }
@@ -178,8 +180,10 @@ export class RallyRoom extends Room<{ state: RallyState }> {
     this.state.ballZ = side === "p1" ? PADDLE_Z.p1 - 0.45 : PADDLE_Z.p2 + 0.45;
     const top = clamp(((input?.vy || 0) * 0.18) + charge * 0.25, -0.8, 0.8);
     const sideSpin = clamp((input?.vx || 0) * 0.12, -0.8, 0.8);
-    const targetX = clamp((Math.random() - 0.5) * TABLE.halfWidth * 0.55 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.75, TABLE.halfWidth * 0.75);
-    const targetZ = zDir * (0.45 + Math.random() * 0.22) * TABLE.halfLength;
+    const aimX = input?.aimX || 0;
+    const aimDepth = input?.aimDepth ?? 0.5;
+    const targetX = clamp(aimX * TABLE.halfWidth * 0.96 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.98, TABLE.halfWidth * 0.98);
+    const targetZ = zDir * (0.08 + aimDepth * 0.88) * TABLE.halfLength;
     const v = solveShot({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin);
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
     this.state.spinTop = top; this.state.spinSide = sideSpin;
@@ -209,6 +213,8 @@ export class RallyRoom extends Room<{ state: RallyState }> {
         charging: Boolean(input?.charging),
         swipeX: input?.vx || 0,
         swipeY: input?.vy || 0,
+        aimX: input?.aimX || 0,
+        aimDepth: input?.aimDepth ?? 0.5,
       },
       { random: Math.random },
     );

@@ -2,7 +2,7 @@
 
 import { Bloom, EffectComposer, ToneMapping } from '@react-three/postprocessing';
 import { useFrame } from '@react-three/fiber';
-import { useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { ToneMappingMode } from 'postprocessing';
 import { TUNING } from '../constants.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
@@ -10,6 +10,9 @@ import { perfSettings } from '../performance.js';
 
 export function Postprocessing() {
   const bloom = useRef(null);
+  const setBloom = useCallback((node) => {
+    bloom.current = node;
+  }, []);
 
   useFrame((_, delta) => {
     const dt = clampDt(delta);
@@ -34,7 +37,7 @@ export function Postprocessing() {
   return (
     <EffectComposer multisampling={perfSettings.composerMultisampling} stencilBuffer={false}>
       <Bloom
-        ref={bloom}
+        ref={setBloom}
         mipmapBlur
         resolutionScale={perfSettings.bloomResolutionScale}
         intensity={TUNING.post.bloom}
