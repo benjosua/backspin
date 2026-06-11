@@ -2,7 +2,7 @@ export const QUALITY_LEVELS = {
   low: {
     name: 'low',
     maxDpr: 1,
-    adaptiveDpr: true,
+    adaptiveDpr: false,
     minDpr: 0.75,
     bloom: false,
     bloomResolutionScale: 0.45,
@@ -18,7 +18,7 @@ export const QUALITY_LEVELS = {
   medium: {
     name: 'medium',
     maxDpr: 1.5,
-    adaptiveDpr: true,
+    adaptiveDpr: false,
     minDpr: 0.9,
     bloom: true,
     bloomResolutionScale: 0.5,
@@ -33,8 +33,8 @@ export const QUALITY_LEVELS = {
   },
   high: {
     name: 'high',
-    maxDpr: 1.75,
-    adaptiveDpr: true,
+    maxDpr: 2.5,
+    adaptiveDpr: false,
     minDpr: 1,
     bloom: true,
     bloomResolutionScale: 0.75,

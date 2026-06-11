@@ -98,6 +98,16 @@ export function Lights() {
         position={[4.5, 7.5, 5.5]}
         intensity={TUNING.lighting.key}
         color={TUNING.lighting.keyColor}
+        castShadow
+        shadow-mapSize={[1024, 1024]}
+        shadow-camera-left={-7}
+        shadow-camera-right={7}
+        shadow-camera-top={8}
+        shadow-camera-bottom={-8}
+        shadow-camera-near={2}
+        shadow-camera-far={16}
+        shadow-bias={-0.0002}
+        shadow-normalBias={0.02}
       />
     </>
   );
@@ -163,6 +173,11 @@ export function ArenaRings() {
 
   return (
     <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.07, 0]} receiveShadow>
+        <planeGeometry args={[14, 16]} />
+        <shadowMaterial transparent opacity={0.16} />
+      </mesh>
+
       <mesh
         ref={ring}
         rotation={[-Math.PI / 2, 0, 0]}
@@ -195,8 +210,8 @@ export function ArenaRings() {
   );
 }
 
-const tableGlow = new Color('#ffb22e');
-const tableHot = new Color('#ff9f2f');
+const tableGlow = new Color('#1689e8');
+const tableHot = new Color('#31a7ff');
 const tableTmp = new Color();
 const tableInset = 0.08;
 const tableHalfWidth = TABLE.halfWidth - tableInset;
@@ -258,6 +273,10 @@ export function TableModel() {
   return (
     <group>
       <primitive object={scene} />
+      <mesh position={[0, 0.009, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow renderOrder={0}>
+        <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
+        <shadowMaterial transparent opacity={0.18} />
+      </mesh>
       <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
         <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
         <meshBasicMaterial ref={glow} color={TUNING.table.emissive} transparent opacity={0} depthWrite={false} blending={2} toneMapped={false} />

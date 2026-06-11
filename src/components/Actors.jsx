@@ -13,7 +13,6 @@ import {
   NormalBlending,
   Object3D,
   ShaderMaterial,
-  Vector2,
   Vector3,
 } from 'three';
 import { COLORS, CPU_PADDLE, getPaddle, PHYSICS, TABLE, TUNING } from '../constants.js';
@@ -24,6 +23,7 @@ import { game, inputHud } from '../engine.js';
 import { networkGame } from '../network.js';
 import { DEBUG_MODE, useGameStore } from '../store.js';
 import { paddleFragmentShader, paddleVertexShader } from '../shaders.js';
+import { createPaddleHeadShape, paddleHeadExtrude } from '../paddleShape.js';
 
 function makeGlowTexture(rgb, strong = false) {
   const canvas = document.createElement('canvas');
@@ -66,8 +66,8 @@ function makePaddleFaceMaterial(paddle) {
     defines: { STYLE: paddle.style },
     uniforms: {
       uTime: { value: 0 },
-      uCore: { value: new Color(paddle.colors.core) },
-      uEdge: { value: new Color(paddle.colors.edge) },
+      uCore: { value: new Color('#d7281f') },
+      uEdge: { value: new Color('#9f1516') },
       uAccent: { value: new Color(paddle.colors.accent) },
       uCharge: { value: 0 },
       uHit: { value: 0 },
@@ -75,39 +75,33 @@ function makePaddleFaceMaterial(paddle) {
     },
     vertexShader: paddleVertexShader,
     fragmentShader: paddleFragmentShader,
+    side: DoubleSide,
   });
 }
 
-const faceRadius = 0.56;
-const bevelY = 0.05;
-const facePlaneZ = 0.056;
-const discRadius = 0.5;
-const lathePoints = (() => {
-  const points = [new Vector2(0, -0.05), new Vector2(faceRadius - bevelY, -0.05)];
-  for (let i = 1; i < 16; i += 1) {
-    const angle = -Math.PI / 2 + (Math.PI * i) / 16;
-    points.push(new Vector2(faceRadius - bevelY + Math.cos(angle) * bevelY, Math.sin(angle) * bevelY));
-  }
-  points.push(new Vector2(faceRadius - bevelY, bevelY));
-  points.push(new Vector2(0, bevelY));
-  return points;
-})();
+const headShape = createPaddleHeadShape();
+const faceShape = createPaddleHeadShape(0.96);
+const facePlaneZ = 0.027;
 
 function PaddleGeometry({ faceMat, paddle }) {
   const colors = paddle.colors;
   return (
     <>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <latheGeometry args={[lathePoints, 64]} />
-        <meshStandardMaterial color={colors.soft} roughness={0.62} metalness={0} />
+      <mesh position={[0, 0, -0.0225]}>
+        <extrudeGeometry args={[headShape, paddleHeadExtrude]} />
+        <meshStandardMaterial color="#8f1d1b" roughness={0.76} metalness={0} />
       </mesh>
       <mesh position={[0, 0, facePlaneZ]}>
-        <circleGeometry args={[discRadius, 64]} />
+        <shapeGeometry args={[faceShape, 32]} />
         <primitive object={faceMat} attach="material" />
       </mesh>
-      <RoundedBox args={[0.17, 0.46, 0.11]} radius={0.045} smoothness={4} position={[0, -0.78, 0]}>
-        <meshStandardMaterial color={colors.handle} roughness={0.7} metalness={0} />
+      <RoundedBox args={[0.21, 0.74, 0.052]} radius={0.032} smoothness={3} position={[0, -0.87, 0]}>
+        <meshStandardMaterial color="#b98255" roughness={0.86} metalness={0} />
       </RoundedBox>
+      <mesh position={[0, -0.87, 0.029]}>
+        <planeGeometry args={[0.085, 0.7]} />
+        <meshBasicMaterial color={colors.edge} />
+      </mesh>
     </>
   );
 }

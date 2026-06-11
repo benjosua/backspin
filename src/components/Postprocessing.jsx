@@ -35,11 +35,11 @@ export function Postprocessing() {
   if (!perfSettings.bloom) return null;
 
   return (
-    <EffectComposer multisampling={perfSettings.composerMultisampling} stencilBuffer={false}>
+    <EffectComposer multisampling={4} stencilBuffer={false}>
       <Bloom
         ref={setBloom}
         mipmapBlur
-        resolutionScale={perfSettings.bloomResolutionScale}
+        resolutionScale={1}
         intensity={TUNING.post.bloom}
         luminanceThreshold={TUNING.post.luminanceThreshold}
         luminanceSmoothing={TUNING.post.luminanceSmoothing}

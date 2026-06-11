@@ -4,13 +4,14 @@
 import { RoundedBox, Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AdditiveBlending, CanvasTexture, Color, ShaderMaterial, Vector2 } from 'three';
+import { AdditiveBlending, CanvasTexture, Color, DoubleSide, ShaderMaterial } from 'three';
 import { BOTS, PADDLES, TUNING } from '../constants.js';
 import { getDebugTime } from '../debug-tuning.js';
 import { clampDt, damp } from '../fx-state.js';
 import { initAudio, playCharge } from '../audio.js';
 import { useGameStore } from '../store.js';
 import { paddleFragmentShader, paddleVertexShader } from '../shaders.js';
+import { createPaddleHeadShape, paddleHeadExtrude } from '../paddleShape.js';
 
 const titleColor = '#fff3e0';
 const ink = '#4b4034';
@@ -82,8 +83,8 @@ function makePaddleFaceMaterial(paddle) {
     defines: { STYLE: paddle.style },
     uniforms: {
       uTime: { value: 0 },
-      uCore: { value: new Color(paddle.colors.core) },
-      uEdge: { value: new Color(paddle.colors.edge) },
+      uCore: { value: new Color('#d7281f') },
+      uEdge: { value: new Color('#9f1516') },
       uAccent: { value: new Color(paddle.colors.accent) },
       uCharge: { value: 0 },
       uHit: { value: 0 },
@@ -91,37 +92,32 @@ function makePaddleFaceMaterial(paddle) {
     },
     vertexShader: paddleVertexShader,
     fragmentShader: paddleFragmentShader,
+    side: DoubleSide,
   });
 }
 
-const paddleLathePoints = (() => {
-  const radius = 0.56;
-  const bevel = 0.05;
-  const points = [new Vector2(0, -0.05), new Vector2(radius - bevel, -0.05)];
-  for (let i = 1; i < 16; i += 1) {
-    const angle = -Math.PI / 2 + (Math.PI * i) / 16;
-    points.push(new Vector2(radius - bevel + Math.cos(angle) * bevel, Math.sin(angle) * bevel));
-  }
-  points.push(new Vector2(radius - bevel, bevel));
-  points.push(new Vector2(0, bevel));
-  return points;
-})();
+const paddleHeadShape = createPaddleHeadShape();
+const paddleFaceShape = createPaddleHeadShape(0.96);
 
 function MiniPaddle({ faceMat, paddle }) {
   const colors = paddle.colors;
   return (
     <>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <latheGeometry args={[paddleLathePoints, 64]} />
-        <meshStandardMaterial color={colors.soft} roughness={0.62} metalness={0} />
+      <mesh position={[0, 0, -0.0225]}>
+        <extrudeGeometry args={[paddleHeadShape, paddleHeadExtrude]} />
+        <meshStandardMaterial color="#8f1d1b" roughness={0.76} metalness={0} />
       </mesh>
-      <mesh position={[0, 0, 0.056]}>
-        <circleGeometry args={[0.5, 64]} />
+      <mesh position={[0, 0, 0.027]}>
+        <shapeGeometry args={[paddleFaceShape, 32]} />
         <primitive object={faceMat} attach="material" />
       </mesh>
-      <RoundedBox args={[0.17, 0.46, 0.11]} radius={0.045} smoothness={4} position={[0, -0.78, 0]}>
-        <meshStandardMaterial color={colors.handle} roughness={0.7} metalness={0} />
+      <RoundedBox args={[0.21, 0.74, 0.052]} radius={0.032} smoothness={3} position={[0, -0.87, 0]}>
+        <meshStandardMaterial color="#b98255" roughness={0.86} metalness={0} />
       </RoundedBox>
+      <mesh position={[0, -0.87, 0.029]}>
+        <planeGeometry args={[0.085, 0.7]} />
+        <meshBasicMaterial color={colors.edge} />
+      </mesh>
     </>
   );
 }

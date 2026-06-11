@@ -15,6 +15,7 @@ import { DesktopOnlyGate } from './components/DesktopOnlyGate.jsx';
 import { useFrame, useThree } from '@react-three/fiber';
 
 const DebugPanel = DEBUG_MODE ? lazy(() => import('./components/DebugPanel.jsx')) : null;
+const maxDpr = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 1.5 : 2.5;
 
 
 function SceneContent() {
@@ -101,8 +102,9 @@ export default function App() {
       <div className="app">
       <Canvas
         flat
-        dpr={[1, perfSettings.maxDpr]}
-        gl={{ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false }}
+        shadows
+        dpr={[1, maxDpr]}
+        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false }}
         camera={{
           fov: DEBUG_MODE ? 38 : 44,
           position: DEBUG_MODE ? CAMERA.introPosition : CAMERA.desktopPosition,
