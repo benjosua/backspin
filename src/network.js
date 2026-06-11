@@ -236,7 +236,6 @@ class NetworkGame {
     this.lastT = seconds;
     this.lastNdcX = x; this.lastNdcY = y; this.ndcX = x; this.ndcY = y;
     this.syncCursorScreen();
-    this.usingKeys = false;
   }
   onPointerDown(event) {
     if (event.pointerType !== 'mouse' || event.button === 0) {
@@ -277,15 +276,12 @@ class NetworkGame {
       this.ndc.set(this.ndcX, this.ndcY);
       this.ray.setFromCamera(this.ndc, camera);
       if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
-        this.inputX = clamp(this.hit.x, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+        this.aimX = clamp(this.hit.x / (TABLE.halfWidth + 0.5), -1, 1);
       }
     }
-    if (this.usingKeys) {
-      const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
-      this.inputX = clamp(this.inputX + dir * 10 * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
-    }
-    this.aimX = clamp(this.inputX / (TABLE.halfWidth + 0.5), -1, 1);
-    this.aimDepth = clamp((this.ndcY + this.kTop * 0.7 + 1) * 0.5, 0, 1);
+    const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
+    if (dir) this.inputX = clamp(this.inputX + dir * 10 * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
     this.pvx = damp(this.pvx, 0, 9, dt);
     this.pvy = damp(this.pvy, 0, 9, dt);
     this.kTop = damp(this.kTop, 0, 6, dt);
@@ -294,7 +290,7 @@ class NetworkGame {
       this.lastSend = now;
       const serverX = this.side === 'p2' ? -this.inputX : this.inputX;
       const serverAimX = this.side === 'p2' ? -this.aimX : this.aimX;
-      const aimY = clamp(this.ndcY + this.kTop * 0.7, -1, 1);
+      const aimY = clamp(this.ndcY, -1, 1);
       const payload = { x: serverX, y: aimY, aimX: serverAimX, aimDepth: this.aimDepth, vx: this.pvx, vy: this.pvy + this.kTop };
       this.room.send('input', payload);
     }

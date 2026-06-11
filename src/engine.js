@@ -586,7 +586,6 @@ export class GameEngine {
     this.ndcX = x;
     this.ndcY = y;
     this.syncCursorScreen();
-    this.usingKeys = false;
   }
 
   onPointerDown(event) {
@@ -682,19 +681,17 @@ export class GameEngine {
     this.kTop = damp(this.kTop, 0, 6, dt);
 
     player.prevX = player.x;
-    if (this.usingKeys) {
-      const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
-      this.inputX = clamp(this.inputX + dir * 10 * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
-    } else if (camera) {
+    const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
+    if (dir) this.inputX = clamp(this.inputX + dir * 10 * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+
+    if (camera) {
       this.ndc.set(this.ndcX, this.ndcY);
       this.ray.setFromCamera(this.ndc, camera);
       if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
-        this.inputX = clamp(this.hit.x, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+        this.aimX = clamp(this.hit.x / (TABLE.halfWidth + 0.5), -1, 1);
       }
     }
-
-    this.aimX = clamp(this.inputX / (TABLE.halfWidth + 0.5), -1, 1);
-    this.aimDepth = clamp((this.ndcY + this.kTop * 0.7 + 1) * 0.5, 0, 1);
+    this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
 
     player.x = damp(player.x, this.inputX, this.paddle.play.follow * 16, dt);
     player.vx = (player.x - player.prevX) / Math.max(dt, 0.000001);

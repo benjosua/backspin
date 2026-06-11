@@ -265,10 +265,10 @@ export function Hud() {
         <div className="panel">
           <h3>{started ? 'PAUSED' : 'CONTROLS'}</h3>
           <ul>
-            <li><b>Move</b><span>{isCoarsePointer ? 'Drag' : 'Mouse · A / D'}</span></li>
-            <li><b>Aim landing</b><span>{isCoarsePointer ? 'Move across table' : 'Mouse X/Y across table'}</span></li>
+            <li><b>Move</b><span>{isCoarsePointer ? 'Drag' : 'A / D'}</span></li>
+            <li><b>Aim landing</b><span>{isCoarsePointer ? 'Move across table' : 'Mouse'}</span></li>
             <li><b>Charge power</b><span>{isCoarsePointer ? 'Hold' : 'Hold mouse · Space'}</span></li>
-            <li><b>Spin</b><span>{isCoarsePointer ? 'Flick at contact' : 'Flick at contact · W / S'}</span></li>
+            <li><b>Spin</b><span>{isCoarsePointer ? 'Flick at contact' : 'W / S'}</span></li>
             <li><b>Smash</b><span>Charge a high ball</span></li>
             <li><b>Serve</b><span>Release</span></li>
             {!isCoarsePointer && <li><b>Pause · back</b><span>Esc</span></li>}
