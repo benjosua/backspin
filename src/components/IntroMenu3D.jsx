@@ -110,7 +110,7 @@ function MiniPaddle({ faceMat, paddle }) {
   const colors = paddle.colors;
   return (
     <>
-      <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
         <latheGeometry args={[paddleLathePoints, 64]} />
         <meshStandardMaterial color={colors.soft} roughness={0.62} metalness={0} />
       </mesh>
@@ -118,7 +118,7 @@ function MiniPaddle({ faceMat, paddle }) {
         <circleGeometry args={[0.5, 64]} />
         <primitive object={faceMat} attach="material" />
       </mesh>
-      <RoundedBox args={[0.17, 0.46, 0.11]} radius={0.045} smoothness={4} position={[0, -0.78, 0]} castShadow>
+      <RoundedBox args={[0.17, 0.46, 0.11]} radius={0.045} smoothness={4} position={[0, -0.78, 0]}>
         <meshStandardMaterial color={colors.handle} roughness={0.7} metalness={0} />
       </RoundedBox>
     </>

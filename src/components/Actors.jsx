@@ -16,6 +16,7 @@ import {
   Vector2,
 } from 'three';
 import { COLORS, CPU_PADDLE, getPaddle, PHYSICS, TABLE, TUNING } from '../constants.js';
+import { perfSettings } from '../performance.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { game, inputHud } from '../engine.js';
 import { networkGame } from '../network.js';
@@ -94,7 +95,7 @@ function PaddleGeometry({ faceMat, paddle }) {
   const colors = paddle.colors;
   return (
     <>
-      <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
         <latheGeometry args={[lathePoints, 64]} />
         <meshStandardMaterial color={colors.soft} roughness={0.62} metalness={0} />
       </mesh>
@@ -102,7 +103,7 @@ function PaddleGeometry({ faceMat, paddle }) {
         <circleGeometry args={[discRadius, 64]} />
         <primitive object={faceMat} attach="material" />
       </mesh>
-      <RoundedBox args={[0.17, 0.46, 0.11]} radius={0.045} smoothness={4} position={[0, -0.78, 0]} castShadow>
+      <RoundedBox args={[0.17, 0.46, 0.11]} radius={0.045} smoothness={4} position={[0, -0.78, 0]}>
         <meshStandardMaterial color={colors.handle} roughness={0.7} metalness={0} />
       </RoundedBox>
     </>
@@ -226,7 +227,7 @@ const Net = forwardRef(function Net(_props, ref) {
   const posts = useRef([]);
   const texture = useMemo(makeNetTexture, []);
 
-  useFrame(() => {
+  useEffect(() => {
     const { color, opacity } = TUNING.net;
     if (cloth.current) {
       cloth.current.opacity = opacity;
@@ -234,7 +235,7 @@ const Net = forwardRef(function Net(_props, ref) {
     }
     for (const material of bars.current) material?.color.set(color);
     for (const material of posts.current) material?.color.set(color);
-  });
+  }, []);
 
   return (
     <group ref={ref}>
@@ -263,11 +264,11 @@ const Net = forwardRef(function Net(_props, ref) {
 });
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
-const sparkleCount = 56;
-const ringCount = 8;
-const shockCount = 5;
-const impactCount = 6;
-const confettiCount = 240;
+const sparkleCount = perfSettings.sparkleCount;
+const ringCount = perfSettings.ringCount;
+const shockCount = perfSettings.shockCount;
+const impactCount = perfSettings.impactCount;
+const confettiCount = perfSettings.confettiCount;
 const confettiColors = ['#e8b25c', '#fff3dc', '#d27e63', '#c2935f', '#ffd98a', '#a8b598'];
 
 const Effects = forwardRef(function Effects(_props, ref) {
@@ -302,6 +303,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
 
   useImperativeHandle(ref, () => ({
     burst(x, y, z, color, count = 7, speed = 3.4) {
+      count = Math.max(1, Math.round(count * perfSettings.fxScale));
       let emitted = 0;
       for (let i = 0; i < sparkleCount && emitted < count; i += 1) {
         const state = sparkleState[i];
@@ -360,6 +362,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
     confetti(x, y, z, count = 48, speed = 2.8) {
       const mesh = confetti.current;
       if (!mesh) return;
+      count = Math.max(1, Math.round(count * perfSettings.fxScale));
       let emitted = 0;
       for (let i = 0; i < confettiCount && emitted < count; i += 1) {
         const state = confettiState[i];

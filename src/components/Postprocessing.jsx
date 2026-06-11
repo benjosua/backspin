@@ -6,6 +6,7 @@ import { useRef } from 'react';
 import { ToneMappingMode } from 'postprocessing';
 import { TUNING } from '../constants.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
+import { perfSettings } from '../performance.js';
 
 export function Postprocessing() {
   const bloom = useRef(null);
@@ -28,17 +29,19 @@ export function Postprocessing() {
     }
   });
 
+  if (!perfSettings.bloom) return null;
+
   return (
-    <EffectComposer multisampling={4} stencilBuffer={false}>
+    <EffectComposer multisampling={perfSettings.composerMultisampling} stencilBuffer={false}>
       <Bloom
         ref={bloom}
         mipmapBlur
-        resolutionScale={1}
+        resolutionScale={perfSettings.bloomResolutionScale}
         intensity={TUNING.post.bloom}
         luminanceThreshold={TUNING.post.luminanceThreshold}
         luminanceSmoothing={TUNING.post.luminanceSmoothing}
         radius={TUNING.post.bloomRadius}
-        levels={TUNING.post.bloomLevels}
+        levels={Math.min(TUNING.post.bloomLevels, perfSettings.bloomLevels)}
       />
       <ToneMapping mode={ToneMappingMode.AGX} />
     </EffectComposer>

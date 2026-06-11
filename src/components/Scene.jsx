@@ -34,13 +34,15 @@ function cloneBasicScene(scene) {
 }
 
 export function WorldBackground() {
-  useFrame(({ scene }) => {
+  const { scene } = useThree();
+
+  useEffect(() => {
     scene.background?.set?.(TUNING.world.background);
     if (scene.fog) {
       scene.fog.color.set(TUNING.world.fog);
       scene.fog.density = TUNING.world.fogDensity;
     }
-  });
+  }, [scene]);
 
   return (
     <>
@@ -87,16 +89,6 @@ export function Lights() {
         position={[4.5, 7.5, 5.5]}
         intensity={TUNING.lighting.key}
         color={TUNING.lighting.keyColor}
-        castShadow
-        shadow-mapSize={[1024, 1024]}
-        shadow-camera-left={-7}
-        shadow-camera-right={7}
-        shadow-camera-top={8}
-        shadow-camera-bottom={-8}
-        shadow-camera-near={2}
-        shadow-camera-far={16}
-        shadow-bias={-0.0002}
-        shadow-normalBias={0.02}
       />
     </>
   );
@@ -162,11 +154,6 @@ export function ArenaRings() {
 
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.07, 0]} receiveShadow>
-        <planeGeometry args={[14, 16]} />
-        <shadowMaterial transparent opacity={0.16} />
-      </mesh>
-
       <mesh
         ref={ring}
         rotation={[-Math.PI / 2, 0, 0]}
@@ -262,10 +249,6 @@ export function TableModel() {
   return (
     <group>
       <primitive object={scene} />
-      <mesh position={[0, 0.009, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow renderOrder={0}>
-        <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
-        <shadowMaterial transparent opacity={0.18} />
-      </mesh>
       <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
         <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
         <meshBasicMaterial ref={glow} color={TUNING.table.emissive} transparent opacity={0} depthWrite={false} blending={2} toneMapped={false} />
@@ -325,9 +308,7 @@ function applyLabelText(node, config, active, letterSpacing = 0) {
   node.fontWeight = config.labelFontWeight;
   node.sdfGlyphSize = config.labelSdfSize;
 }
-function positionLabels(playerLabel, cpuLabel, config, y, server) {
-  applyLabelText(playerLabel, config, server === 'player', config.labelYouLetterSpacing);
-  applyLabelText(cpuLabel, config, server === 'ai', 0);
+function positionLabelCoords(playerLabel, cpuLabel, config, y) {
   playerLabel.position.set(-config.scoreX, y, 0);
   cpuLabel.position.set(config.scoreX, y, 0);
 }
@@ -350,6 +331,14 @@ export function WallScoreboard() {
   const divider = useRef(null);
   const serveDot = useRef(null);
   const anim = useRef({ score: 0, side: 0, win: 0, winFlash: 0, prevP: 0, prevAI: 0 });
+  const lastServer = useRef(null);
+
+  useEffect(() => {
+    const config = TUNING.scoreboard;
+    if (playerScore.current) applyScoreText(playerScore.current, config);
+    if (cpuScore.current) applyScoreText(cpuScore.current, config);
+    lastServer.current = null;
+  }, [scoreP, scoreAI]);
 
   useEffect(() => {
     const state = anim.current;
@@ -405,15 +394,18 @@ export function WallScoreboard() {
     if (playerScore.current) {
       playerScore.current.position.set(-config.scoreX, scoreY + playerPop * config.popLift, scoreZ);
       playerScore.current.scale.setScalar(breathe * (1 + playerPop * config.popScale));
-      applyScoreText(playerScore.current, config);
     }
     if (cpuScore.current) {
       cpuScore.current.position.set(config.scoreX, scoreY + cpuPop * config.popLift, scoreZ);
       cpuScore.current.scale.setScalar(breathe * (1 + cpuPop * config.popScale));
-      applyScoreText(cpuScore.current, config);
     }
     if (playerLabel.current && cpuLabel.current) {
-      positionLabels(playerLabel.current, cpuLabel.current, config, labelY, server);
+      if (lastServer.current !== server) {
+        lastServer.current = server;
+        applyLabelText(playerLabel.current, config, server === 'player', config.labelYouLetterSpacing);
+        applyLabelText(cpuLabel.current, config, server === 'ai', 0);
+      }
+      positionLabelCoords(playerLabel.current, cpuLabel.current, config, labelY);
     }
     if (labelGroup.current) labelGroup.current.position.z = labelZ;
     if (divider.current) {
