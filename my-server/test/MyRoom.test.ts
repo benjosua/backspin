@@ -1,11 +1,9 @@
 import assert from "assert";
 import { ColyseusTestServer, boot } from "@colyseus/testing";
 
-// import your "app.config.ts" file here.
 import appConfig from "../src/app.config.js";
-import { MyRoomState } from "../src/rooms/schema/MyRoomState.js";
 
-describe("testing your Colyseus app", () => {
+describe("backspin room", () => {
   let colyseus: ColyseusTestServer<typeof appConfig>;
 
   before(async () => colyseus = await boot(appConfig));
@@ -13,19 +11,27 @@ describe("testing your Colyseus app", () => {
 
   beforeEach(async () => await colyseus.cleanup());
 
-  it("connecting into a room", async () => {
-    // `room` is the server-side Room instance reference.
-    const room = await colyseus.createRoom<MyRoomState>("my_room", {});
+  it("lets a client connect to a public backspin room", async () => {
+    const room = await colyseus.createRoom("backspin", { mode: "public" });
+    const client = await colyseus.connectTo(room, { name: "PLAYER" });
 
-    // `client1` is the client-side `Room` instance reference (same as JavaScript SDK)
-    const client1 = await colyseus.connectTo(room);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timed out waiting for room state")), 1000);
+      const check = () => {
+        if (client.state?.toJSON?.().joined === 1) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      };
+      client.onStateChange(check);
+      check();
+    });
+    const state = client.state.toJSON();
 
-    // make your assertions
-    assert.strictEqual(client1.sessionId, room.clients[0].sessionId);
-
-    // wait for state sync
-    await room.waitForNextPatch();
-
-    assert.deepStrictEqual({ mySynchronizedProperty: "Hello world" }, client1.state.toJSON());
+    assert.strictEqual(client.sessionId, room.clients[0].sessionId);
+    assert.strictEqual(state.phase, "waiting");
+    assert.strictEqual(state.mode, "public");
+    assert.strictEqual(state.joined, 1);
+    assert.match(state.roomCode, /^[A-HJ-NP-Z2-9]{5}$/);
   });
 });

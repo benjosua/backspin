@@ -17,7 +17,7 @@ export const arenaFx = {
   smash: 0,
   score: 0,
   serveCharge: 0,
-  rallyN: 0,
+  exchangeN: 0,
   ix: 0,
   iz: 0,
 };
@@ -35,7 +35,7 @@ export function resetFx() {
   arenaFx.smash = 0;
   arenaFx.score = 0;
   arenaFx.serveCharge = 0;
-  arenaFx.rallyN = 0;
+  arenaFx.exchangeN = 0;
 }
 
 export function decayFx(dt) {

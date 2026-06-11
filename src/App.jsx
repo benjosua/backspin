@@ -6,24 +6,21 @@ import { Preload } from '@react-three/drei';
 import { DEBUG_MODE, useGameStore } from './store.js';
 import { CAMERA } from './constants.js';
 import { perfSettings, perfHudEnabled } from './performance.js';
-import { WorldBackground, Lights, EnvironmentModel, ArenaRings, TableModel, SkyWall, WallScoreboard } from './components/Scene.jsx';
+import { WorldBackground, Lights, ArenaRings, TableModel, WallScoreboard } from './components/Scene.jsx';
 import { Actors } from './components/Actors.jsx';
 import { IntroMenu3D } from './components/IntroMenu3D.jsx';
 import { Hud, IntroOverlay, PointerCursor, ModePicker } from './components/Hud.jsx';
-import { Postprocessing } from './components/Postprocessing.jsx';
 import { DesktopOnlyGate } from './components/DesktopOnlyGate.jsx';
 import { useFrame, useThree } from '@react-three/fiber';
 
 const DebugPanel = DEBUG_MODE ? lazy(() => import('./components/DebugPanel.jsx')) : null;
-const maxDpr = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 1.5 : 2.5;
+const renderScaleDpr = { low: 1, medium: 1.5, high: 2.5 };
 
 
 function SceneContent() {
   return (
     <>
       <Lights />
-      <SkyWall />
-      <EnvironmentModel />
       <ArenaRings />
       <TableModel />
       <Actors />
@@ -35,8 +32,15 @@ function SceneContent() {
 
 function PerformanceRuntime() {
   const { gl, setDpr } = useThree();
-  const stats = useRef({ frames: 0, sum: 0, dpr: perfSettings.maxDpr, last: 0 });
+  const renderScale = useGameStore((state) => state.performancePrefs.renderScale);
+  const targetDpr = renderScaleDpr[renderScale] || renderScaleDpr.medium;
+  const stats = useRef({ frames: 0, sum: 0, dpr: targetDpr, last: 0 });
   const hud = useRef(null);
+
+  useEffect(() => {
+    stats.current.dpr = targetDpr;
+    setDpr(targetDpr);
+  }, [setDpr, targetDpr]);
 
   useEffect(() => {
     if (!perfHudEnabled && !DEBUG_MODE) return undefined;
@@ -85,7 +89,7 @@ function PerformanceRuntime() {
     if ((DEBUG_MODE || perfHudEnabled) && state.clock.elapsedTime - data.last > 0.5) {
       data.last = state.clock.elapsedTime;
       const info = gl.info;
-      const message = `quality=${perfSettings.name}\ndpr=${data.dpr.toFixed(2)} fps=${Math.round(1 / Math.max(delta, 0.001))}\ncalls=${info.render.calls} tris=${info.render.triangles}\ngeoms=${info.memory.geometries} tex=${info.memory.textures}`;
+      const message = `quality=${perfSettings.name} scale=${renderScale}\ndpr=${data.dpr.toFixed(2)} fps=${Math.round(1 / Math.max(delta, 0.001))}\ncalls=${info.render.calls} tris=${info.render.triangles}\ngeoms=${info.memory.geometries} tex=${info.memory.textures}`;
       if (hud.current) hud.current.textContent = message;
       else console.debug(`[perf] ${message.replaceAll('\n', ' ')}`);
     }
@@ -96,6 +100,9 @@ function PerformanceRuntime() {
 
 export default function App() {
   const debugRevision = useGameStore((state) => (DEBUG_MODE ? state.debugRevision : 0));
+  const performanceRevision = useGameStore((state) => state.performanceRevision);
+  const renderScale = useGameStore((state) => state.performancePrefs.renderScale);
+  const targetDpr = renderScaleDpr[renderScale] || renderScaleDpr.medium;
 
   return (
     <DesktopOnlyGate>
@@ -103,7 +110,7 @@ export default function App() {
       <Canvas
         flat
         shadows
-        dpr={[1, maxDpr]}
+        dpr={[1, targetDpr]}
         gl={{ antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false }}
         camera={{
           fov: DEBUG_MODE ? 38 : 44,
@@ -115,8 +122,7 @@ export default function App() {
         <PerformanceRuntime />
         <WorldBackground />
         <Suspense fallback={null}>
-          <SceneContent key={debugRevision} />
-          <Postprocessing />
+          <SceneContent key={`${debugRevision}:${performanceRevision}`} />
           <Preload all />
         </Suspense>
       </Canvas>

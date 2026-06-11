@@ -1,6 +1,6 @@
 import { BOTS, CAMERA, PHYSICS, TABLE, TUNING } from './constants.js';
 
-export const DEBUG_TUNING_STORAGE_KEY = 'rally.debugTuning.v1';
+export const DEBUG_TUNING_STORAGE_KEY = 'backspin.debugTuning.v1';
 
 const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
 export const debugTuningEnabled = !!params?.has('debug');

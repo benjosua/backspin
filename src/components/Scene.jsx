@@ -4,10 +4,11 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { Text, useGLTF } from '@react-three/drei';
 import { useEffect, useMemo, useRef } from 'react';
-import { BackSide, Color, MeshBasicMaterial, ShaderMaterial, AdditiveBlending } from 'three';
+import { BackSide, Color, MeshBasicMaterial, ShaderMaterial } from 'three';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { useGameStore } from '../store.js';
+import { MONTSERRAT_FONT_URL } from '../fonts.js';
 import { BOTS, TABLE, TUNING } from '../constants.js';
 import { skyFragmentShader, skyVertexShader } from '../shaders.js';
 import { getDebugTime } from '../debug-tuning.js';
@@ -292,10 +293,8 @@ export function TableModel() {
 
 
 const wallZ = -17.15;
-const wallW = 28.4;
 const wallH = 12.4;
 const wallCenterY = 4;
-const dividerHeight = 1;
 const digitChars = '0123456789';
 const labelChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
@@ -349,15 +348,16 @@ export function WallScoreboard() {
   const winner = useGameStore((state) => state.winner);
   const difficulty = useGameStore((state) => state.difficulty);
   const mode = useGameStore((state) => state.mode);
+  const playerName = useGameStore((state) => state.playerName);
+  const onlineOpponentName = useGameStore((state) => state.opponentName);
   const bot = useMemo(() => BOTS.find((item) => item.id === difficulty) ?? BOTS[1], [difficulty]);
-  const opponentLabel = mode === 'online' ? 'OPPONENT' : bot.name;
+  const playerLabelText = playerName || 'PLAYER';
+  const opponentLabel = mode === 'online' ? (onlineOpponentName || 'OPPONENT') : bot.name;
   const playerScore = useRef(null);
   const cpuScore = useRef(null);
   const playerLabel = useRef(null);
   const cpuLabel = useRef(null);
   const labelGroup = useRef(null);
-  const divider = useRef(null);
-  const serveDot = useRef(null);
   const anim = useRef({ score: 0, side: 0, win: 0, winFlash: 0, prevP: 0, prevAI: 0 });
   const lastServer = useRef(null);
 
@@ -436,49 +436,27 @@ export function WallScoreboard() {
       positionLabelCoords(playerLabel.current, cpuLabel.current, config, labelY);
     }
     if (labelGroup.current) labelGroup.current.position.z = labelZ;
-    if (divider.current) {
-      const top = scoreY + config.scoreFontSize * 0.52;
-      const bottom = labelY + config.labelFontSize * 0.5;
-      const height = Math.max(0.01, top - bottom);
-      divider.current.position.y = (top + bottom) * 0.5;
-      divider.current.scale.y = height / dividerHeight;
-      divider.current.material.color.set(config.dividerColor);
-      divider.current.material.opacity = config.dividerOpacity;
-    }
-    if (serveDot.current) {
-      serveDot.current.position.y = labelY - 0.36;
-      serveDot.current.material.color.set(config.serveDotColor);
-      serveDot.current.material.opacity = config.serveDotOpacity;
-    }
   });
 
   return (
     <group frustumCulled={false} visible={started}>
-      <Text ref={playerScore} renderOrder={4} anchorX="center" anchorY="middle" characters={digitChars} depthOffset={-4}>
+      <Text ref={playerScore} font={MONTSERRAT_FONT_URL} renderOrder={4} anchorX="center" anchorY="middle" characters={digitChars} depthOffset={-4}>
         {String(scoreP).padStart(2, '0')}
         <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
       </Text>
-      <Text ref={cpuScore} renderOrder={4} anchorX="center" anchorY="middle" characters={digitChars} depthOffset={-4}>
+      <Text ref={cpuScore} font={MONTSERRAT_FONT_URL} renderOrder={4} anchorX="center" anchorY="middle" characters={digitChars} depthOffset={-4}>
         {String(scoreAI).padStart(2, '0')}
         <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
       </Text>
       <group ref={labelGroup} position={[0, 0, 0]} renderOrder={5}>
-        <Text ref={playerLabel} renderOrder={5} anchorX="center" anchorY="middle" characters={labelChars} depthOffset={-5}>
-          YOU
+        <Text ref={playerLabel} font={MONTSERRAT_FONT_URL} renderOrder={5} anchorX="center" anchorY="middle" characters={labelChars} depthOffset={-5}>
+        {playerLabelText}
           <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
         </Text>
-        <Text ref={cpuLabel} renderOrder={5} anchorX="center" anchorY="middle" characters={labelChars} depthOffset={-5}>
+        <Text ref={cpuLabel} font={MONTSERRAT_FONT_URL} renderOrder={5} anchorX="center" anchorY="middle" characters={labelChars} depthOffset={-5}>
           {opponentLabel}
           <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
         </Text>
-        <mesh ref={divider} position={[0, 0, 0]} renderOrder={5}>
-          <planeGeometry args={[0.022, dividerHeight]} />
-          <meshBasicMaterial transparent depthWrite={false} blending={AdditiveBlending} toneMapped={false} />
-        </mesh>
-        <mesh ref={serveDot} position={[0, 0, 0]} renderOrder={5}>
-          <circleGeometry args={[0.055, 32]} />
-          <meshBasicMaterial transparent depthWrite={false} blending={AdditiveBlending} toneMapped={false} />
-        </mesh>
       </group>
     </group>
   );

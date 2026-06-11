@@ -10,16 +10,7 @@ let reverb;
 let reverbGain;
 let noiseBuffer;
 let crowdGain = null;
-let music = null;
-let musicGain = null;
-let musicFilter = null;
-let muted = false;
-let wasMusicPlaying = false;
 let masterVolume = 0.85;
-let musicVolume = 0.1;
-let musicHighpass = 20;
-let menuMusicHighpass = 620;
-let menuMusicVolumeFactor = 0.55;
 const PENTATONIC = [0, 2, 4, 7, 9];
 const ROOT = 196;
 
@@ -39,7 +30,6 @@ export function initAudio() {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
       setupGraph();
       startGameStateAudioLoop();
-      setupMuteHotkey();
     } catch {
       audioContext = null;
       return;
@@ -50,7 +40,7 @@ export function initAudio() {
 
 function setupGraph() {
   masterGain = audioContext.createGain();
-  masterGain.gain.value = muted ? 0 : masterVolume;
+  masterGain.gain.value = masterVolume;
 
   compressor = audioContext.createDynamicsCompressor();
   compressor.threshold.value = -14;
@@ -71,46 +61,7 @@ function setupGraph() {
 
   noiseBuffer = makeNoiseBuffer(0.5);
   startCrowdBed();
-  setupMusic();
   audioReady = true;
-}
-
-function setupMusic() {
-  if (music || !audioContext) return;
-  music = new Audio('/song.mp3');
-  music.loop = true;
-  music.preload = 'auto';
-  const source = audioContext.createMediaElementSource(music);
-  musicFilter = audioContext.createBiquadFilter();
-  musicFilter.type = 'highpass';
-  musicFilter.frequency.value = musicHighpass;
-  musicFilter.Q.value = 0.7;
-  musicGain = audioContext.createGain();
-  musicGain.gain.value = musicVolume;
-  source.connect(musicFilter).connect(musicGain).connect(dryGain);
-}
-
-function setMusicPlaying(playing) {
-  if (!music) return;
-  if (playing && musicEnabled) music.play().catch(() => {});
-  else if (!playing) {
-    music.pause();
-    music.currentTime = 0;
-  }
-}
-
-let musicEnabled = true;
-export function toggleMusic() {
-  musicEnabled = !musicEnabled;
-  setMuted(!musicEnabled);
-  if (musicEnabled) {
-    initAudio();
-    setMusicPlaying(true);
-  } else if (music) {
-    music.pause();
-    music.currentTime = 0;
-  }
-  return musicEnabled;
 }
 
 function makeNoiseBuffer(seconds) {
@@ -286,45 +237,21 @@ function pulseCrowd(amount) {
   crowdGain.gain.setTargetAtTime(base, t + 0.14, 0.7);
 }
 
-export function setMuted(value) {
-  muted = value;
-  if (masterGain) masterGain.gain.setTargetAtTime(value ? 0 : masterVolume, now(), 0.03);
-}
-
-export function toggleMute() {
-  setMuted(!muted);
-  return muted;
-}
-
-let hotkeyBound = false;
-function setupMuteHotkey() {
-  if (hotkeyBound) return;
-  hotkeyBound = true;
-  window.addEventListener('keydown', (event) => {
-    if (event.code === 'KeyM' && !event.repeat) toggleMute();
-  });
-}
-
 let pointerBound = false;
 function bindPointerUnlock() {
   if (pointerBound) return;
   pointerBound = true;
   window.addEventListener('pointerdown', () => {
     initAudio();
-    setMusicPlaying(true);
   });
 }
 bindPointerUnlock();
 
 function pauseForHiddenTab() {
-  wasMusicPlaying = !!(music && !music.paused);
-  if (music) music.pause();
   if (audioContext?.state === 'running') audioContext.suspend().catch(() => {});
 }
 function resumeFromHiddenTab() {
-  if (!musicEnabled || muted) return;
   if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {});
-  if (wasMusicPlaying && music) music.play().catch(() => {});
 }
 let visibilityBound = false;
 function bindVisibility() {
@@ -348,9 +275,6 @@ function startGameStateAudioLoop() {
     lastPhase = state.phase;
     const menuOpen = state.started && state.menuOpen && state.phase !== 'over';
     if (menuOpen !== wasMenuOpen) {
-      const lag = 0.14;
-      if (musicFilter) musicFilter.frequency.setTargetAtTime(menuOpen ? menuMusicHighpass : musicHighpass, now(), lag);
-      if (musicGain) musicGain.gain.setTargetAtTime(musicVolume * (menuOpen ? menuMusicVolumeFactor : 1), now(), lag);
       playTransition(menuOpen);
       wasMenuOpen = menuOpen;
     }

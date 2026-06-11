@@ -1,5 +1,5 @@
 {
-  "name": "rally-recovered-game",
+  "name": "backspin",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -7,22 +7,24 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "docker:build": "docker build -t rally-recovered-game .",
-    "docker:run": "docker run --rm -p 2567:2567 rally-recovered-game",
-    "docker:up": "docker compose up --build"
+    "docker:build": "docker build -t backspin .",
+    "docker:run": "docker run --rm -p 2567:2567 backspin",
+    "docker:up": "docker compose up --build",
+    "server:build": "npm --prefix my-server run build",
+    "server:test": "npm --prefix my-server test",
+    "check": "npm run build && npm run server:build && npm run server:test"
   },
   "dependencies": {
     "@colyseus/sdk": "^0.17.42",
     "@react-three/drei": "latest",
     "@react-three/fiber": "latest",
-    "@react-three/postprocessing": "^3.0.4",
     "@vitejs/plugin-react": "latest",
     "leva": "^0.10.1",
-    "postprocessing": "^6.39.1",
     "react": "latest",
     "react-dom": "latest",
     "three": "latest",
     "troika-three-text": "latest",
+    "typeface-montserrat": "^1.1.13",
     "vite": "latest",
     "zustand": "^5.0.14"
   }

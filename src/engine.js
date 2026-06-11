@@ -15,7 +15,7 @@ import {
 import { DEBUG_MODE, debugFlags, randomSide, useGameStore } from './store.js';
 import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js';
 import { initAudio, playBounce, playCharge, playHit, playMenu, playNet } from './audio.js';
-import { predictBounceKick, resolvePlayerShot, solveSafeShot, solveShot } from '../shared/rally-core.js';
+import { predictBounceKick, resolvePlayerShot, solveSafeShot, solveShot } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
 const rand = () => Math.random();
@@ -40,7 +40,7 @@ export const inputHud = {
   aimX: 0,
   aimDepth: 0.5,
   aimLabel: '',
-  rally: 0,
+  exchange: 0,
   callout: '',
   calloutT: 0,
   calloutColor: '',
@@ -61,7 +61,7 @@ export function resetInputHud() {
   inputHud.aimX = 0;
   inputHud.aimDepth = 0.5;
   inputHud.aimLabel = '';
-  inputHud.rally = 0;
+  inputHud.exchange = 0;
   inputHud.callout = '';
   inputHud.calloutT = 0;
   inputHud.cursorVisible = false;
@@ -79,13 +79,13 @@ export function updateBrain(brain, aiWonPoint, pointQuality = 0.5) {
   brain.confidence = clamp(brain.confidence, 0.08, 0.96);
   return brain.confidence;
 }
-export function fatiguePenalty(rally) {
-  return Math.min(0.28, Math.max(0, rally - 5) * 0.014);
+export function fatiguePenalty(exchange) {
+  return Math.min(0.28, Math.max(0, exchange - 5) * 0.014);
 }
-export function effectiveSkill(bot, brain, aiScore, playerScore, rally = 0) {
+export function effectiveSkill(bot, brain, aiScore, playerScore, exchange = 0) {
   const confidenceBoost = (brain.confidence - 0.5) * bot.confSwing;
   const catchupPenalty = -bot.catchup * (aiScore - playerScore) * 0.03;
-  return clamp(bot.skill + confidenceBoost + catchupPenalty - fatiguePenalty(rally), 0.2, 0.98);
+  return clamp(bot.skill + confidenceBoost + catchupPenalty - fatiguePenalty(exchange), 0.2, 0.98);
 }
 
 function sideFromZ(z) {
@@ -107,7 +107,7 @@ export class GameEngine {
     this.firstServer = randomSide();
     this.lastHitter = null;
     this.bouncedReceiver = false;
-    this.rally = 0;
+    this.exchange = 0;
     this.pointTimer = 0;
     this.aiServeTimer = 0;
     this.shake = 0;
@@ -189,7 +189,7 @@ export class GameEngine {
   }
 
   resetServe() {
-    this.rally = 0;
+    this.exchange = 0;
     this.lastHitter = null;
     this.bouncedReceiver = false;
     this.vel.set(0, 0, 0);
@@ -217,12 +217,12 @@ export class GameEngine {
 
   point(winner, reason) {
     const store = useGameStore.getState();
-    if (store.phase !== 'rally' && store.phase !== 'serve') return;
+    if (store.phase !== 'exchange' && store.phase !== 'serve') return;
     store.setPhase('point');
     this.pointTimer = 1;
     store.bumpScore(winner);
     const { scoreP, scoreAI } = useGameStore.getState();
-    const ace = reason === 'WINNER' && this.rally === 0;
+    const ace = reason === 'WINNER' && this.exchange === 0;
     const label = ace ? 'ACE' : reason;
     const color = winner === 'player' ? COLORS.player : COLORS.ai;
     this.fx?.burst?.(this.ball.x, this.ball.y, this.ball.z, color, ace ? 18 : 14, ace ? 6 : 5);
@@ -247,7 +247,7 @@ export class GameEngine {
       store.setPhase('over');
       store.setWinner(winner);
       this.overT = 0;
-      this.volley = 0;
+        this.volley = 0;
       this.charging = false;
     }
   }
@@ -299,7 +299,7 @@ export class GameEngine {
     this.bouncedReceiver = false;
     this.charge = 0;
     if (server === 'player') this.reactTimer = this.tier.serveReact ?? this.tier.reactionDelay;
-    useGameStore.getState().setPhase('rally');
+    useGameStore.getState().setPhase('exchange');
     racket.swing = 1;
     playHit(charge, 0);
     raiseFx('pulse', 0.45 + charge * 0.4);
@@ -317,10 +317,10 @@ export class GameEngine {
     const reach = isPlayer ? this.reach : PHYSICS.serveHeight;
     const offset = clamp((ball.x - racket.x) / reach, -1, 1);
     const highBall = ball.y > PHYSICS.playerHeight;
-    this.rally += 1;
-    if ([8, 14, 20, 30].includes(this.rally)) this.setCallout(`RALLY ${this.rally}`, COLORS.ink);
+    this.exchange += 1;
+    if ([8, 14, 20, 30].includes(this.exchange)) this.setCallout(`STREAK ${this.exchange}`, COLORS.ink);
 
-    let flightTime = clamp(0.66 - this.rally * 0.013, 0.44, 0.66);
+    let flightTime = clamp(0.66 - this.exchange * 0.013, 0.44, 0.66);
     let topSpin, sideSpin, targetX, targetZ;
     let error = 0;
     let power = 0;
@@ -339,7 +339,7 @@ export class GameEngine {
           ball: { x: ball.x, y: ball.y, z: ball.z },
           incomingVelocity: { x: this.vel.x, y: this.vel.y, z: this.vel.z },
           offset,
-          rally: this.rally,
+          exchange: this.exchange,
         },
         {
           charge: power,
@@ -369,8 +369,8 @@ export class GameEngine {
     } else {
       const bot = this.tier;
       const { scoreAI, scoreP } = useGameStore.getState();
-      const fatigue = fatiguePenalty(this.rally);
-      const skill = effectiveSkill(bot, this.brain, scoreAI, scoreP, this.rally);
+      const fatigue = fatiguePenalty(this.exchange);
+      const skill = effectiveSkill(bot, this.brain, scoreAI, scoreP, this.exchange);
       const confidence = this.brain.confidence;
       const playerX = this.player.x;
       const incomingSpeed = Math.hypot(this.vel.x, this.vel.z);
@@ -447,7 +447,7 @@ export class GameEngine {
     this.fx?.impact?.(ball.x, ball.y, ball.z, color, smash ? 1 : 0.4 + power * 0.6);
     if (smash || power > 0.6) this.fx?.shock?.(ball.x, ball.y, ball.z, color, smash ? 2.8 : 1.6);
     this.shake = (smash ? 0.55 : 0.18) + power * 0.28;
-    playHit(smash ? 1 : power, this.rally);
+    playHit(smash ? 1 : power, this.exchange);
     arenaFx.ix = ball.x;
     arenaFx.iz = ball.z;
     raiseFx('pulse', isPlayer ? 0.55 + power * 0.45 : 0.5);
@@ -478,14 +478,14 @@ export class GameEngine {
     const ai = this.ai;
     const ball = this.ball;
     if (this.reactTimer > 0) this.reactTimer -= dt;
-    const fatigue = fatiguePenalty(this.rally);
-    const firstReturn = this.rally === 0 && phase === 'rally' && this.lastHitter === 'player';
+    const fatigue = fatiguePenalty(this.exchange);
+    const firstReturn = this.exchange === 0 && phase === 'exchange' && this.lastHitter === 'player';
     let predict = bot.predict * (1 - fatigue * 1.15);
     if (firstReturn && bot.servePredict != null) predict = Math.max(predict, bot.servePredict);
     const maxSpeed = bot.paddleSpeed * (1 - fatigue * 0.32);
     const react = bot.react * (1 - fatigue * 0.22);
     let target = 0;
-    const incoming = phase === 'rally' && this.lastHitter === 'player';
+    const incoming = phase === 'exchange' && this.lastHitter === 'player';
     if (incoming && this.reactTimer <= 0) {
       const time = this.vel.z < -0.1 ? clamp((-4.8 - ball.z) / this.vel.z, 0, 1.2) : 0.4;
       const predicted = ball.x + this.vel.x * time + this.spin.side * 0.5 * PHYSICS.magnus * time * time;
@@ -643,7 +643,7 @@ export class GameEngine {
       const forced = debugFlags.forceOver;
       const winner = typeof forced === 'object' ? forced.winner : forced;
       this.overT = 0;
-      this.volley = 0;
+        this.volley = 0;
       if (winner === 'player' || winner === 'ai') {
         state.setPhase('over');
         state.setWinner(winner);
@@ -670,11 +670,11 @@ export class GameEngine {
       if (inputHud.calloutT <= 0) inputHud.callout = '';
     }
 
-    const rallying = phase === 'rally';
-    arenaFx.heat = damp(arenaFx.heat, rallying ? clamp(0.16 + this.rally * 0.07, 0, 1) : 0, rallying ? 2.6 : 1, dt);
+    const exchanging = phase === 'exchange';
+    arenaFx.heat = damp(arenaFx.heat, exchanging ? clamp(0.16 + this.exchange * 0.07, 0, 1) : 0, exchanging ? 2.6 : 1, dt);
     decayFx(dt);
     arenaFx.serveCharge = this.charge;
-    arenaFx.rallyN = this.rally;
+    arenaFx.exchangeN = this.exchange;
 
     this.pvx = damp(this.pvx, 0, 9, dt);
     this.pvy = damp(this.pvy, 0, 9, dt);
@@ -682,7 +682,7 @@ export class GameEngine {
 
     player.prevX = player.x;
     const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
-    if (dir) this.inputX = clamp(this.inputX + dir * 10 * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    if (dir) this.inputX = clamp(this.inputX + dir * 19 * state.playerSpeed * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
 
     if (camera) {
       this.ndc.set(this.ndcX, this.ndcY);
@@ -693,11 +693,11 @@ export class GameEngine {
     }
     this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
 
-    player.x = damp(player.x, this.inputX, this.paddle.play.follow * 16, dt);
+    player.x = damp(player.x, this.inputX, this.paddle.play.follow * 32 * state.playerSpeed, dt);
     player.vx = (player.x - player.prevX) / Math.max(dt, 0.000001);
     this.updateAI(dt, phase);
 
-    const aiCanSmashTell = phase === 'rally' && this.lastHitter === 'player' && this.bouncedReceiver && this.tier.smashChance > 0.25 && ball.z < -2.4 && this.vel.z < 0 && ball.y > 0.68;
+    const aiCanSmashTell = phase === 'exchange' && this.lastHitter === 'player' && this.bouncedReceiver && this.tier.smashChance > 0.25 && ball.z < -2.4 && this.vel.z < 0 && ball.y > 0.68;
     ai.tell = damp(ai.tell, Number(!!aiCanSmashTell), aiCanSmashTell ? 10 : 8, dt);
     if (aiCanSmashTell && !this.tellSounded && ai.tell > 0.4) {
       playCharge(0.85);
@@ -705,7 +705,7 @@ export class GameEngine {
     }
     if (!aiCanSmashTell) this.tellSounded = false;
 
-    const canCharge = phase === 'rally' || (phase === 'serve' && server === 'player');
+    const canCharge = phase === 'exchange' || (phase === 'serve' && server === 'player');
     if (this.charging && canCharge) {
       const old = this.charge;
       this.charge = Math.min(1, this.charge + dt / PHYSICS.hitReach);
@@ -715,7 +715,7 @@ export class GameEngine {
     }
     inputHud.charge = this.charge;
     inputHud.charging = this.charging && canCharge;
-    inputHud.rally = this.rally;
+    inputHud.exchange = this.exchange;
     inputHud.aimX = this.aimX;
     inputHud.aimDepth = this.aimDepth;
     inputHud.aimLabel = `${this.aimX < -0.25 ? 'LEFT' : this.aimX > 0.25 ? 'RIGHT' : 'CENTER'} · ${this.aimDepth < 0.35 ? 'SHORT' : this.aimDepth > 0.7 ? 'DEEP' : 'MID'}`;
@@ -728,7 +728,7 @@ export class GameEngine {
 
     for (const racket of [player, ai]) {
       const who = racket.who;
-      const incoming = phase === 'rally' && this.lastHitter !== who && this.lastHitter !== null;
+      const incoming = phase === 'exchange' && this.lastHitter !== who && this.lastHitter !== null;
       const yLimit = who === 'player' ? 2.6 : 1.6;
       const targetY = incoming ? clamp(ball.y, 0.4, yLimit) : 0.62 + Math.sin(time * 2 + (who === 'ai' ? 2 : 0)) * 0.07;
       racket.y = damp(racket.y, targetY, 8, dt);
@@ -750,7 +750,7 @@ export class GameEngine {
         if (this.swoop >= 1) this.aiServeTimer -= dt;
         if (this.aiServeTimer <= 0) this.serve();
       }
-    } else if (phase === 'rally' || phase === 'point') {
+    } else if (phase === 'exchange' || phase === 'point') {
       this.prevBallX = ball.x;
       this.prevBallY = ball.y;
       const prevZ = ball.z;
@@ -759,7 +759,7 @@ export class GameEngine {
       ball.x += this.vel.x * dt;
       ball.y += this.vel.y * dt;
       ball.z += this.vel.z * dt;
-      if (phase === 'rally') {
+      if (phase === 'exchange') {
         if (!this.handleNet(prevZ)) {
           this.checkRacketHit('player', prevZ);
           this.checkRacketHit('ai', prevZ);
@@ -789,7 +789,7 @@ export class GameEngine {
     this.shadow.z = ball.z;
     this.shadow.op = tableish ? clamp(0.45 - ball.y * 0.09, 0.1, 0.45) : 0;
     this.shadow.scale = 0.5 + ball.y * 0.16;
-    const aiming = phase === 'rally' || (phase === 'serve' && server === 'player');
+    const aiming = phase === 'exchange' || (phase === 'serve' && server === 'player');
     this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
     this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
     this.aim.op = aiming ? clamp(0.12 + this.charge * 0.6, 0, 0.78) : 0;
@@ -797,7 +797,7 @@ export class GameEngine {
     this.aim.spinY = clamp((this.pvy + this.kTop) * 0.12, -1, 1);
     this.aim.power = this.charge;
 
-    if (phase === 'rally' && this.lastHitter === 'ai' && !this.bouncedReceiver) {
+    if (phase === 'exchange' && this.lastHitter === 'ai' && !this.bouncedReceiver) {
       this.marker.op = 0;
       this.marker.spin = 0;
       this.marker.smash = 0;
@@ -875,7 +875,7 @@ export class GameEngine {
     arenaFx.heat = damp(arenaFx.heat, 0, 1, dt);
     decayFx(dt);
     arenaFx.serveCharge = 0;
-    arenaFx.rallyN = 0;
+    arenaFx.exchangeN = 0;
 
     if (camera) {
       this.ndc.set(this.ndcX, this.ndcY);

@@ -2,11 +2,10 @@
 
 import { useProgress } from '@react-three/drei';
 import { useEffect, useRef, useState } from 'react';
-import { BOTS, COLORS, PADDLES } from '../constants.js';
+import { BOTS, COLORS, PLAYER_SPEED } from '../constants.js';
 import { inputHud } from '../engine.js';
 import { networkGame } from '../network.js';
-import { toggleMusic } from '../audio.js';
-import { useGameStore } from '../store.js';
+import { RENDER_SCALES, useGameStore } from '../store.js';
 
 const MATCH_TO = 11;
 const padScore = (value) => String(value).padStart(2, '0');
@@ -94,44 +93,60 @@ export function DifficultyButtons() {
   );
 }
 
-export function PaddleButtons() {
-  const paddle = useGameStore((state) => state.paddle);
-  const setPaddle = useGameStore((state) => state.setPaddle);
+
+
+export function PlayerSpeedSetting() {
+  const playerSpeed = useGameStore((state) => state.playerSpeed);
+  const setPlayerSpeed = useGameStore((state) => state.setPlayerSpeed);
   return (
-    <div className="paddle-row">
-      {PADDLES.map((item) => (
-        <button key={item.id} className={`paddle-card ${item.id === paddle ? 'on' : ''}`} onClick={() => setPaddle(item.id)} title={item.tag} style={{ '--accent': item.colors.edge }}>
-          <span className="pc-swatch" style={{ background: `radial-gradient(circle at 50% 38%, ${item.colors.accent}, ${item.colors.core} 52%, ${item.colors.edge})` }} />
-          <span className="pc-name">{item.name}</span>
-        </button>
-      ))}
+    <label className="speed-setting" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <span>PLAYER SPEED</span>
+      <input
+        type="number"
+        min={Math.round(PLAYER_SPEED.min * 100)}
+        max={Math.round(PLAYER_SPEED.max * 100)}
+        step="5"
+        value={Math.round(playerSpeed * 100)}
+        onChange={(event) => setPlayerSpeed(Number(event.target.value) / 100)}
+        aria-label="player speed percent"
+      />
+      <em>%</em>
+    </label>
+  );
+}
+
+export function PerformanceSettings() {
+  const performancePrefs = useGameStore((state) => state.performancePrefs);
+  const setPerformancePref = useGameStore((state) => state.setPerformancePref);
+  return (
+    <div className="perf-settings" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <div className="perf-title">PERFORMANCE</div>
+      <div className="perf-row">
+        <span>RENDER SCALE</span>
+        <div className="perf-seg">
+          {Object.entries(RENDER_SCALES).map(([key, value]) => (
+            <button
+              key={key}
+              type="button"
+              className={performancePrefs.renderScale === key ? 'on' : ''}
+              onClick={() => setPerformancePref('renderScale', key)}
+            >
+              {value.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="perf-toggle">
+        <span>EXTRA FX</span>
+        <input
+          type="checkbox"
+          checked={performancePrefs.extraFx}
+          onChange={(event) => setPerformancePref('extraFx', event.target.checked)}
+        />
+      </label>
     </div>
   );
 }
-
-export function SoundButton() {
-  const [enabled, setEnabled] = useState(true);
-  const className = `sound-btn ${enabled ? '' : 'muted'}`;
-  return (
-    <button
-      className={className}
-      onClick={(event) => {
-        event.stopPropagation();
-        setEnabled(toggleMusic());
-      }}
-      onPointerDown={stop}
-      onPointerUp={stop}
-      aria-label={enabled ? 'turn sound off' : 'turn sound on'}
-      title={enabled ? 'sound off' : 'sound on'}
-    >
-      <svg viewBox="0 0 30 14">
-        <path className="sw-wave" d="M-7 7 Q -5 1, -3 7 T 1 7 T 5 7 T 9 7 T 13 7 T 17 7 T 21 7 T 25 7 T 29 7 T 33 7 T 37 7 T 41 7" />
-        <path className="sw-flat" d="M1 7 L 29 7" />
-      </svg>
-    </button>
-  );
-}
-
 
 export function ModePicker() {
   const started = useGameStore((state) => state.started);
@@ -139,6 +154,8 @@ export function ModePicker() {
   const networkStatus = useGameStore((state) => state.networkStatus);
   const networkError = useGameStore((state) => state.networkError);
   const roomCode = useGameStore((state) => state.roomCode);
+  const playerName = useGameStore((state) => state.playerName);
+  const setPlayerName = useGameStore((state) => state.setPlayerName);
   const start = useGameStore((state) => state.start);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -150,6 +167,16 @@ export function ModePicker() {
   return (
     <div className="mode-picker" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
       <div className="mode-title">MODE</div>
+      <div className="mode-row name">
+        <input
+          className="player-name-input"
+          value={playerName}
+          onChange={(event) => setPlayerName(event.target.value)}
+          placeholder="NAME"
+          maxLength={12}
+          aria-label="player name"
+        />
+      </div>
       <div className="mode-row">
         <button onClick={start} disabled={busy}>OFFLINE</button>
         <button onClick={() => run(() => networkGame.quickMatch())} disabled={busy}>QUICK MATCH</button>
@@ -184,10 +211,13 @@ export function Hud() {
   const mode = useGameStore((state) => state.mode);
   const networkStatus = useGameStore((state) => state.networkStatus);
   const roomCode = useGameStore((state) => state.roomCode);
+  const playerName = useGameStore((state) => state.playerName);
+  const onlineOpponentName = useGameStore((state) => state.opponentName);
 
   const bot = BOTS.find((item) => item.id === difficulty) ?? BOTS[1];
   const botName = bot.name;
-  const opponentName = mode === 'online' ? 'OPPONENT' : botName;
+  const youName = playerName || 'PLAYER';
+  const opponentName = mode === 'online' ? (onlineOpponentName || 'OPPONENT') : botName;
   const playerWon = winner === 'player';
   const delta = Math.abs(scoreP - scoreAI);
   const flavor = playerWon
@@ -214,7 +244,7 @@ export function Hud() {
             <div className="match">MATCH TO {MATCH_TO}</div>
             <div className="scoreboard">
               <div className={`side ${server === 'player' ? 'serving' : ''}`}>
-                <span className="lbl you">YOU</span>
+                <span className="lbl you">{youName}</span>
                 <span className="num">{padScore(scoreP)}</span>
               </div>
               <span className="sep">|</span>
@@ -273,6 +303,8 @@ export function Hud() {
             <li><b>Serve</b><span>Release</span></li>
             {!isCoarsePointer && <li><b>Pause · back</b><span>Esc</span></li>}
           </ul>
+          <PlayerSpeedSetting />
+          <PerformanceSettings />
           {started && mode !== 'online' && <button onClick={newGame}>RESTART&nbsp;GAME</button>}
           {started && <button onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>EXIT&nbsp;TO&nbsp;LOBBY</button>}
           <button onClick={toggleMenu}>{started ? 'RESUME' : 'CLOSE'}</button>
@@ -284,7 +316,7 @@ export function Hud() {
           <div className="over-kicker">{playerWon ? 'GAME · SET · MATCH' : 'MATCH OVER'}</div>
           <div className="over-title">{playerWon ? 'YOU WIN' : `${opponentName} WINS`}</div>
           <div className="over-score">
-            <div className="os-side"><span className="os-lbl">YOU</span><span className="os-num os-you">{scoreP}</span></div>
+            <div className="os-side"><span className="os-lbl">{youName}</span><span className="os-num os-you">{scoreP}</span></div>
             <span className="os-sep">—</span>
             <div className="os-side"><span className="os-lbl">{opponentName}</span><span className="os-num os-cpu">{scoreAI}</span></div>
           </div>
@@ -293,8 +325,6 @@ export function Hud() {
             <div className="over-card">
               <div className="over-pick">NEXT OPPONENT</div>
               <DifficultyButtons />
-              <div className="over-pick pad">YOUR PADDLE</div>
-              <PaddleButtons />
             </div>
             <div className="over-actions">
               {mode !== 'online' && <button className="rematch" onClick={newGame}>REMATCH&nbsp;·&nbsp;{botName}</button>}
@@ -303,8 +333,6 @@ export function Hud() {
           </div>
         </div>
       )}
-
-      <SoundButton />
     </div>
   );
 }
@@ -370,18 +398,14 @@ export function IntroOverlay() {
   }, [leaving]);
 
   if (removed) return null;
-  const percent = Math.round(loaded ? 100 : progress);
-  const width = `${percent}%`;
 
   return (
     <div className={leaving ? 'intro intro-leave' : 'intro'}>
-      <div className="intro-title" aria-label="RALLY">
-        {'RALLY'.split('').map((letter, index) => (
+      <div className="intro-title" aria-label="BACKSPIN">
+        {'BACKSPIN'.split('').map((letter, index) => (
           <span key={index} style={{ animationDelay: `${0.25 + index * 0.09}s` }}>{letter}</span>
         ))}
       </div>
-      <div className="intro-sub">TABLE TENNIS</div>
-      <div className="intro-load"><div className="intro-load-fill" style={{ width }} /></div>
     </div>
   );
 }

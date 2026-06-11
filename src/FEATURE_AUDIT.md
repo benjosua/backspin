@@ -5,11 +5,10 @@ Scope: `/recovered-src` compared against `recovered-webcrack-nojsx/app-only.deob
 
 ## Present in recovered source
 
-- Exact static deployed replica still exists via `/index.html` + `/public/assets/index-DXcVVo4s.js`.
 - Recovered source test entry: `/recovered.html`.
 - Core game state/store: `recovered-src/store.js`.
 - Gameplay engine: `recovered-src/engine.js`.
-- WebAudio/music/sfx: `recovered-src/audio.js`.
+- WebAudio/sfx: `src/audio.js`.
 - FX state: `recovered-src/fx-state.js`.
 - GLSL shaders: `recovered-src/shaders.js`.
 - Scene/lights/models/table/background: `recovered-src/components/Scene.jsx`.
@@ -43,7 +42,7 @@ Recovered source now has:
 
 ### 3. Mobile/desktop gate `xM` — restored
 Original app wraps root in `xM`, which blocks coarse pointer or width <= 640px with:
-- `RALLY`
+- `BACKSPIN`
 - `This is a desktop-only experiment.`
 - `Open on a computer to play.`
 
@@ -69,19 +68,19 @@ Impact:
 - Normal users unaffected.
 - Debug/tuning workflow not restored.
 
-### 5. Source-mode CSS override — cleared
-`recovered-src/recovered-overrides.css` remains linked but contains no active override now that 3D wall score is restored.
+### 5. Source-mode CSS override — active
+`src/backspin-overrides.css` remains linked for Backspin-specific layout tweaks and online UI overrides.
 
 ## Recently fixed recovery mismatches
 
 - Player flick side-spin used wrong constant:
   - Wrong: `PHYSICS.magnus` (`7.5`).
   - Correct original equivalent: `CAMERA.cameraZBase` (`0.34`).
-- Recovered source used old `/src/styles.css` instead of deployed CSS. Fixed `recovered.html` to load `/assets/index-BzZ6c66z.css` plus override.
+- Recovered source used old `/src/styles.css` instead of deployed CSS. Fixed the source entry to load `/assets/index-BzZ6c66z.css` plus override.
 - Source-mode Troika font data hit jsDelivr. Fixed via `configureTextBuilder` local vendor URL.
 
 ## Priority next work
 
 1. Optionally recover `gK` debug/Leva tuning panel.
-2. Interactive playtest: intro -> start -> serve charge -> rally -> point -> score pop -> game over.
+2. Interactive playtest: intro -> start -> serve charge -> exchange -> point -> score pop -> game over.
 3. Promote recovered source from `/recovered.html` to main app entry once playtest passes.

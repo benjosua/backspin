@@ -66,8 +66,8 @@ function makePaddleFaceMaterial(paddle) {
     defines: { STYLE: paddle.style },
     uniforms: {
       uTime: { value: 0 },
-      uCore: { value: new Color('#d7281f') },
-      uEdge: { value: new Color('#9f1516') },
+      uCore: { value: new Color('#d9665f') },
+      uEdge: { value: new Color('#c85f59') },
       uAccent: { value: new Color(paddle.colors.accent) },
       uCharge: { value: 0 },
       uHit: { value: 0 },
@@ -89,7 +89,7 @@ function PaddleGeometry({ faceMat, paddle }) {
     <>
       <mesh position={[0, 0, -0.0225]}>
         <extrudeGeometry args={[headShape, paddleHeadExtrude]} />
-        <meshStandardMaterial color="#8f1d1b" roughness={0.76} metalness={0} />
+        <meshStandardMaterial color="#c85f59" roughness={0.76} metalness={0} />
       </mesh>
       <mesh position={[0, 0, facePlaneZ]}>
         <shapeGeometry args={[faceShape, 32]} />
@@ -136,7 +136,7 @@ function trailAttenuation(value) {
   return value ** TUNING.ballTrail.attenuationPower;
 }
 
-const Ball = forwardRef(function Ball(_props, ref) {
+const Ball = forwardRef(function Ball({ extraFx }, ref) {
   const group = useRef(null);
   const mesh = useRef(null);
   const trail = useRef(null);
@@ -164,6 +164,14 @@ const Ball = forwardRef(function Ball(_props, ref) {
   });
 
   const config = TUNING.ballTrail;
+  const ballMesh = (
+    <mesh ref={mesh}>
+      <sphereGeometry args={[TABLE.ballRadius, 24, 18]} />
+      <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.22} roughness={0.42} metalness={0} />
+    </mesh>
+  );
+  if (!extraFx) return <group ref={group}>{ballMesh}</group>;
+
   return (
     <group ref={group}>
       <Trail
@@ -178,10 +186,7 @@ const Ball = forwardRef(function Ball(_props, ref) {
         stride={config.stride}
         interval={config.interval}
       >
-        <mesh ref={mesh}>
-          <sphereGeometry args={[TABLE.ballRadius, 24, 18]} />
-          <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.22} roughness={0.42} metalness={0} />
-        </mesh>
+        {ballMesh}
       </Trail>
     </group>
   );
@@ -265,9 +270,9 @@ const ringCount = perfSettings.ringCount;
 const shockCount = perfSettings.shockCount;
 const impactCount = perfSettings.impactCount;
 const confettiCount = perfSettings.confettiCount;
-const confettiColors = ['#e8b25c', '#fff3dc', '#d27e63', '#c2935f', '#ffd98a', '#a8b598'];
+const confettiColors = ['#d9665f', '#fff3dc', '#de7a6d', '#c85f59', '#ef8f87', '#a8b598'];
 
-const Effects = forwardRef(function Effects(_props, ref) {
+const Effects = forwardRef(function Effects({ enabled }, ref) {
   const sparkleTexture = useMemo(() => makeGlowTexture('255,238,210'), []);
   const ringTexture = useMemo(() => makeRingTexture('255,236,196'), []);
   const sparkles = useRef([]);
@@ -299,6 +304,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
 
   useImperativeHandle(ref, () => ({
     burst(x, y, z, color, count = 7, speed = 3.4) {
+      if (!enabled) return;
       count = Math.max(1, Math.round(count * perfSettings.fxScale));
       let emitted = 0;
       for (let i = 0; i < sparkleCount && emitted < count; i += 1) {
@@ -318,6 +324,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
       }
     },
     ring(x, z) {
+      if (!enabled) return;
       for (let i = 0; i < ringCount; i += 1) {
         if (ringState[i].life > 0) continue;
         ringState[i].life = 0.5;
@@ -326,6 +333,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
       }
     },
     shock(x, y, z, color, to = 1.8) {
+      if (!enabled) return;
       for (let i = 0; i < shockCount; i += 1) {
         if (shockState[i].life > 0) continue;
         shockState[i].life = shockState[i].max = 0.5;
@@ -341,6 +349,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
       }
     },
     impact(x, y, z, color, power = 0.6) {
+      if (!enabled) return;
       for (let i = 0; i < impactCount; i += 1) {
         if (impactState[i].life > 0) continue;
         impactState[i].life = impactState[i].max = 0.26;
@@ -356,6 +365,7 @@ const Effects = forwardRef(function Effects(_props, ref) {
       }
     },
     confetti(x, y, z, count = 48, speed = 2.8) {
+      if (!enabled) return;
       const mesh = confetti.current;
       if (!mesh) return;
       count = Math.max(1, Math.round(count * perfSettings.fxScale));
@@ -386,9 +396,10 @@ const Effects = forwardRef(function Effects(_props, ref) {
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     },
-  }), [confettiPalette, confettiState, impactState, ringState, shockState, sparkleState]);
+  }), [confettiPalette, confettiState, enabled, impactState, ringState, shockState, sparkleState]);
 
   useFrame((_, delta) => {
+    if (!enabled) return;
     const dt = clampDt(delta);
     for (let i = 0; i < sparkleCount; i += 1) {
       const state = sparkleState[i];
@@ -488,6 +499,8 @@ const Effects = forwardRef(function Effects(_props, ref) {
     if (dirty) mesh.instanceMatrix.needsUpdate = true;
   });
 
+  if (!enabled) return null;
+
   return (
     <group>
       {sparkleState.map((_, index) => (
@@ -576,6 +589,7 @@ export function Actors() {
   const phase = useRef('serve');
   const shadowTexture = useMemo(() => makeGlowTexture('70,58,38', true), []);
   const resetNonce = useGameStore((state) => state.resetNonce);
+  const extraFx = useGameStore((state) => state.performancePrefs.extraFx);
   const mode = useGameStore((state) => state.mode);
   const paddleId = useGameStore((state) => state.paddle);
   const paddle = useMemo(() => getPaddle(paddleId), [paddleId]);
@@ -793,7 +807,7 @@ export function Actors() {
       <group ref={visibleGroup} visible={DEBUG_MODE}>
         <Paddle ref={player} paddle={paddle} />
         <Paddle ref={ai} paddle={CPU_PADDLE} />
-        <Ball ref={ball} />
+        <Ball ref={ball} extraFx={extraFx} />
         <sprite ref={shadow} position={[0, 0.02, 0]} scale={[0.6, 0.6, 1]}>
           <spriteMaterial map={shadowTexture} transparent opacity={0} blending={NormalBlending} depthWrite={false} />
         </sprite>
@@ -811,7 +825,7 @@ export function Actors() {
         </mesh>
         <mesh ref={markerSpin} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.038, 0]}>
           <ringGeometry args={[0.48, 0.51, 48, 1, 0, Math.PI * 1.55]} />
-          <meshBasicMaterial color="#ff6a00" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+          <meshBasicMaterial color="#ef8f87" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
         </mesh>
         <mesh ref={markerSmash} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
           <ringGeometry args={[0.56, 0.62, 56]} />
@@ -831,7 +845,7 @@ export function Actors() {
         </mesh>
       </group>
       <Net ref={net} />
-      <Effects ref={effects} />
+      <Effects ref={effects} enabled={extraFx} />
     </group>
   );
 }

@@ -1,4 +1,4 @@
-// Recovered from production bundle /assets/index-DXcVVo4s.js.
+// Constants reconstructed from the production bundle.
 
 export const TABLE = {
   halfLength: 4.75,       // $w
@@ -6,6 +6,12 @@ export const TABLE = {
   netHeight: 0.5,         // tT
   ballRadius: 0.12,       // nT
   bounceRestitution: 0.82,// rT
+};
+
+export const PLAYER_SPEED = {
+  default: 1,
+  min: 0.5,
+  max: 1.6,
 };
 
 export const PHYSICS = {
@@ -52,10 +58,10 @@ export const COLORS = {
   line: '#fbf6ec',
   net: '#fbf7ee',
   ball: '#ffe8a4',
-  player: '#f0a23b',
-  playerSoft: '#f6c074',
-  ai: '#dd8a6f',
-  aiSoft: '#e8ab93',
+  player: '#d9665f',
+  playerSoft: '#ef8f87',
+  ai: '#de7a6d',
+  aiSoft: '#ef8f87',
   ink: '#4b4034',
   inkSoft: '#b4a690',
 };
@@ -72,7 +78,7 @@ export const TUNING = {
     lineGlow: 1.2,
   },
   background: {
-    ringColor: '#ff703d',
+    ringColor: '#ef8f87',
     ringInner: 6,
     ringWidth: 0.3,
     ringScaleX: 1.23,
@@ -82,23 +88,14 @@ export const TUNING = {
     ringOpacity: 0.8,
   },
   sky: { zenith: '#ddb9a3', edge: '#ffe9cf', horizon: 0.58 },
-  lighting: { ambient: 1.84, ambColor: '#d15e00', key: 5, keyColor: '#ffffff' },
-  post: {
-    bloom: 0.55,
-    bloomHeat: 0.12,
-    bloomFlash: 0.22,
-    luminanceThreshold: 0.96,
-    luminanceSmoothing: 0.08,
-    bloomRadius: 0.18,
-    bloomLevels: 3,
-  },
+  lighting: { ambient: 1.84, ambColor: '#ef8f87', key: 5, keyColor: '#ffffff' },
   net: { opacity: 1, color: '#fbf7ee' },
   ballTrail: { width: 4.2, length: 6, decay: 5, color: '#ffffff', attenuationPower: 3.2, local: false, stride: 0, interval: 1 },
-  menu: { titleColor: '#fff3e0', titleBoost: 1.35, titleGlowColor: '#ff9100', titleGlow: 0.45, titleSize: 3.45, titleTracking: 0.56, titleY: 4.9, glassOpacity: 0.86, glassRim: 0.72, cardOpacity: 0.92 },
+  menu: { titleColor: '#fff3e0', titleBoost: 1.35, titleGlowColor: '#ef8f87', titleGlow: 0.45, titleSize: 2.55, titleTracking: 0.24, titleY: 4.9, glassOpacity: 0.86, glassRim: 0.72, cardOpacity: 0.92 },
   scoreboard: {
     scoreFill: '#ffc0a1',
     scoreFillBoost: 1.95,
-    scoreGlow: '#dea600',
+    scoreGlow: '#d9665f',
     scoreFillOpacity: 1,
     scoreOutlineWidth: 3.5,
     scoreOutlineBlur: 1.5,
@@ -123,7 +120,7 @@ export const TUNING = {
     labelYouLetterSpacing: 0.06,
     dividerColor: '#fff9f0',
     dividerOpacity: 0.52,
-    serveDotColor: '#f0a23b',
+    serveDotColor: '#d9665f',
     serveDotOpacity: 0.78,
     boardCY: 0.43,
     scoreZOffset: 0.045,
@@ -145,13 +142,10 @@ export const BOT_BY_ID = Object.fromEntries(BOTS.map((bot) => [bot.id, bot]));
 export const getBot = (id) => BOT_BY_ID[id] || BOT_BY_ID.rookie;
 
 export const PADDLES = [
-  { id: 'ember', name: 'BALANCED', tag: 'Reliable all-around play.', style: 0, colors: { core: '#f6c074', edge: '#f0a23b', accent: '#ffd98a', soft: '#f3e7d2', handle: '#df7a4f', glowRGB: '240,162,59' }, stats: { power: 0.6, spin: 0.4, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } },
-  { id: 'jade', name: 'SPIN', tag: 'More curve, less punch.', style: 2, colors: { core: '#a9cea6', edge: '#5f9d77', accent: '#d4ead0', soft: '#e2eade', handle: '#56806a', glowRGB: '120,180,130' }, stats: { power: 0.4, spin: 0.8, control: 0.4, speed: 0.4 }, play: { follow: 1, reach: 1.06, power: 0.85, spin: 1.3, control: 1.32 } },
-  { id: 'volt', name: 'POWER', tag: 'Fast shots, harder control.', style: 1, colors: { core: '#9cc4cf', edge: '#5b97a6', accent: '#cfe6ea', soft: '#dfe9ea', handle: '#5a7e86', glowRGB: '120,175,190' }, stats: { power: 0.8, spin: 0.4, control: 0.4, speed: 0.4 }, play: { follow: 1.04, reach: 0.94, power: 1.2, spin: 0.82, control: 0.82 } },
-  { id: 'zephyr', name: 'SPEED', tag: 'Quick to the ball, lighter touch.', style: 3, colors: { core: '#c2a6d6', edge: '#8e6fb0', accent: '#e6d6f0', soft: '#e7e0ee', handle: '#6a5a86', glowRGB: '160,130,195' }, stats: { power: 0.4, spin: 0.4, control: 0.4, speed: 0.8 }, play: { follow: 1.22, reach: 1.16, power: 0.92, spin: 1.06, control: 1 } },
+  { id: 'ember', name: 'BALANCED', tag: 'Reliable all-around play.', style: 0, colors: { core: '#d9665f', edge: '#c85f59', accent: '#ef8f87', soft: '#f3e7d2', handle: '#c98274', glowRGB: '217,102,95' }, stats: { power: 0.6, spin: 0.4, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } },
 ];
 
 export const DEFAULT_PADDLE = 'ember';
-export const CPU_PADDLE = { id: 'house', name: 'HOUSE', tag: 'CPU', style: 0, colors: { core: '#e3a085', edge: '#dd8a6f', accent: '#f3c3ad', soft: '#ead9cb', handle: '#c07c66', glowRGB: '221,138,111' }, stats: { power: 0.6, spin: 0.6, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } };
+export const CPU_PADDLE = { id: 'house', name: 'HOUSE', tag: 'CPU', style: 0, colors: { core: '#e3a085', edge: '#de7a6d', accent: '#f3c3ad', soft: '#ead9cb', handle: '#c98274', glowRGB: '222,122,109' }, stats: { power: 0.6, spin: 0.6, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } };
 export const PADDLE_BY_ID = Object.fromEntries(PADDLES.map((paddle) => [paddle.id, paddle]));
 export const getPaddle = (id) => PADDLE_BY_ID[id] || PADDLE_BY_ID.ember;

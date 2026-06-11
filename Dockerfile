@@ -8,6 +8,8 @@ RUN npm ci
 FROM client-deps AS client-build
 COPY index.html ./
 COPY public ./public
+COPY shared ./shared
+COPY my-server/src/shared ./my-server/src/shared
 COPY src ./src
 RUN npm run build
 
@@ -32,4 +34,5 @@ COPY --from=server-build /app/my-server/build ./build
 COPY --from=client-build /app/dist /app/dist
 
 EXPOSE 2567
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 2567) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 CMD ["npm", "run", "start:prod"]

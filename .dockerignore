@@ -3,6 +3,11 @@ my-server/node_modules
 dist
 my-server/build
 .git
+.gsd
+.vscode
+.idea
 .DS_Store
 npm-debug.log*
+*.log
 .env*
+coverage

@@ -12,14 +12,14 @@ import path from "node:path";
 /**
  * Import your Room files
  */
-import { RallyRoom } from "./rooms/RallyRoom.js";
+import { BackspinRoom } from "./rooms/BackspinRoom.js";
 
 const server = defineServer({
     /**
      * Define your room handlers:
      */
     rooms: {
-        rally: defineRoom(RallyRoom).filterBy(["mode"])
+        backspin: defineRoom(BackspinRoom).filterBy(["mode"])
     },
 
     /**
@@ -40,16 +40,13 @@ const server = defineServer({
      * Read more: https://expressjs.com/en/starter/basic-routing.html
      */
     express: (app) => {
-        app.get("/hi", (req, res) => {
-            res.send("It's time to kick ass and chew bubblegum!");
+        app.get("/healthz", (req, res) => {
+            res.status(200).json({ ok: true });
         });
 
-        /**
-         * Use @colyseus/monitor
-         * It is recommended to protect this route with a password
-         * Read more: https://docs.colyseus.io/tools/monitoring/#restrict-access-to-the-panel-using-a-password
-         */
-        app.use("/monitor", monitor());
+        if (process.env.ENABLE_MONITOR === "true") {
+            app.use("/monitor", monitor());
+        }
 
         /**
          * Use @colyseus/playground
@@ -63,7 +60,7 @@ const server = defineServer({
             const clientDist = process.env.CLIENT_DIST_DIR || path.resolve(process.cwd(), "../dist");
             app.use(express.static(clientDist));
             app.get("*", (req, res, next) => {
-                if (req.path.startsWith("/api") || req.path.startsWith("/monitor")) return next();
+                if (req.path.startsWith("/api") || req.path.startsWith("/healthz") || req.path.startsWith("/monitor")) return next();
                 res.sendFile(path.join(clientDist, "index.html"));
             });
         }

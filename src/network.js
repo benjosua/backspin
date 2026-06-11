@@ -5,7 +5,7 @@ import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js
 import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
 import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
-import { predictBounceKick } from '../shared/rally-core.js';
+import { predictBounceKick } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
 const url = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
@@ -18,6 +18,7 @@ const browserNeedsPointerScale = (() => {
   return (/Apple/.test(navigator.vendor || '') && !chromium) || firefox;
 })();
 const pointerScale = () => (browserNeedsPointerScale && window.devicePixelRatio) || 1;
+const playerName = () => useGameStore.getState().playerName || 'PLAYER';
 
 function makeRacket(who, z) {
   return { who, x: 0, y: 0.62, z, rotX: who === 'player' ? -0.22 : 0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: z, tell: 0 };
@@ -84,17 +85,17 @@ class NetworkGame {
   isConnected() { return !!this.room; }
 
   async quickMatch() {
-    return this.join(client.joinOrCreate('rally', { mode: 'public', paddle: useGameStore.getState().paddle, name: 'PLAYER' }));
+    return this.join(client.joinOrCreate('backspin', { mode: 'public', name: playerName() }));
   }
 
   async createPrivate() {
-    return this.join(client.create('rally', { mode: 'private', paddle: useGameStore.getState().paddle, name: 'PLAYER' }));
+    return this.join(client.create('backspin', { mode: 'private', name: playerName() }));
   }
 
   async joinPrivate(code) {
     const wanted = String(code).trim().toUpperCase();
     useGameStore.getState().setNetworkStatus('connecting');
-    return this.join(client.joinById(wanted, { paddle: useGameStore.getState().paddle, name: 'PLAYER' }));
+    return this.join(client.joinById(wanted, { name: playerName() }));
   }
 
   async join(promise) {
@@ -126,7 +127,7 @@ class NetworkGame {
     });
     room.onMessage('fx', (message) => {
       if (message.type === 'bounce') playBounce();
-      if (message.type === 'hit') playHit(message.smash ? 1 : 0.4, this.remoteState?.rally || 0);
+      if (message.type === 'hit') playHit(message.smash ? 1 : 0.4, this.remoteState?.exchange || 0);
       if (message.type === 'point') playMenu(message.winner === this.side);
       if (message.type === 'net') playNet();
     });
@@ -140,7 +141,7 @@ class NetworkGame {
   }
 
   sendProfile() {
-    this.room?.send('profile', { paddle: useGameStore.getState().paddle, name: 'PLAYER' });
+    this.room?.send('profile', { name: playerName() });
   }
 
   async disconnect(goHome = true) {
@@ -169,13 +170,15 @@ class NetworkGame {
     const localIsP1 = local === 'p1';
     const scoreP = localIsP1 ? s.scoreP1 : s.scoreP2;
     const scoreAI = localIsP1 ? s.scoreP2 : s.scoreP1;
+    const localName = localIsP1 ? s.p1Name : s.p2Name;
+    const opponentName = localIsP1 ? s.p2Name : s.p1Name;
     const server = s.server === local ? 'player' : 'ai';
     const winner = !s.winner ? null : s.winner === local ? 'player' : 'ai';
     const status = s.phase === 'waiting' ? 'waiting' : 'connected';
     if (s.pointSeq && s.pointSeq !== this.lastPointSeq) {
       this.lastPointSeq = s.pointSeq;
       const localWon = s.pointWinner === local;
-      const label = s.pointReason === 'WINNER' && s.rally === 0 ? 'ACE' : s.pointReason;
+      const label = s.pointReason === 'WINNER' && s.exchange === 0 ? 'ACE' : s.pointReason;
       useGameStore.getState().flash(label || (localWon ? 'POINT' : 'POINT'), localWon ? COLORS.player : COLORS.ai);
     }
     useGameStore.getState().syncOnlineState({
@@ -184,6 +187,8 @@ class NetworkGame {
       phase: s.phase === 'waiting' ? 'serve' : s.phase,
       server,
       winner,
+      playerName: localName || playerName(),
+      opponentName: opponentName || 'OPPONENT',
       networkStatus: status,
       roomCode: s.roomCode,
     });
@@ -207,7 +212,7 @@ class NetworkGame {
     this.ai.tell = localIsP1 ? s.p2Charge : s.p1Charge;
     inputHud.charge = this.charge;
     inputHud.charging = this.charging;
-    inputHud.rally = s.rally;
+    inputHud.exchange = s.exchange;
   }
 
   newMatch() {}
@@ -280,7 +285,7 @@ class NetworkGame {
       }
     }
     const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
-    if (dir) this.inputX = clamp(this.inputX + dir * 10 * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    if (dir) this.inputX = clamp(this.inputX + dir * 19 * store.playerSpeed * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
     this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
     this.pvx = damp(this.pvx, 0, 9, dt);
     this.pvy = damp(this.pvy, 0, 9, dt);
@@ -291,10 +296,10 @@ class NetworkGame {
       const serverX = this.side === 'p2' ? -this.inputX : this.inputX;
       const serverAimX = this.side === 'p2' ? -this.aimX : this.aimX;
       const aimY = clamp(this.ndcY, -1, 1);
-      const payload = { x: serverX, y: aimY, aimX: serverAimX, aimDepth: this.aimDepth, vx: this.pvx, vy: this.pvy + this.kTop };
+      const payload = { x: serverX, y: aimY, aimX: serverAimX, aimDepth: this.aimDepth, vx: this.pvx, vy: this.pvy + this.kTop, speed: store.playerSpeed };
       this.room.send('input', payload);
     }
-    const paddleEase = 1 - Math.exp(-26 * dt);
+    const paddleEase = 1 - Math.exp(-(39 * store.playerSpeed) * dt);
     const ballEase = 1 - Math.exp(-22 * dt);
     const predictedPlayerX = this.room ? this.inputX : this.targetPlayerX;
     this.player.prevX = this.player.x;
@@ -332,7 +337,7 @@ class NetworkGame {
     this.shadow.z = this.ball.z;
     this.shadow.op = tableish ? clamp(0.45 - this.ball.y * 0.09, 0.1, 0.45) : 0;
     this.shadow.scale = 0.5 + this.ball.y * 0.16;
-    const aiming = store.phase === 'rally' || (store.phase === 'serve' && store.server === 'player');
+    const aiming = store.phase === 'exchange' || (store.phase === 'serve' && store.server === 'player');
     this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
     this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
     this.aim.op = aiming ? clamp(0.12 + this.charge * 0.6, 0, 0.78) : 0;
@@ -342,7 +347,7 @@ class NetworkGame {
     this.marker.op = 0;
     this.marker.spin = 0;
     this.marker.smash = 0;
-    const incoming = store.phase === 'rally' && this.ball.z < PHYSICS.gravity && this.vel.z > 0;
+    const incoming = store.phase === 'exchange' && this.ball.z < PHYSICS.gravity && this.vel.z > 0;
     if (incoming && this.ball.y > TABLE.ballRadius) {
       const prediction = predictBounceKick(this.ball, this.vel, this.spin);
       if (prediction) {
@@ -358,9 +363,9 @@ class NetworkGame {
     }
     this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
     this.netRotX = Math.sin(time * 26) * this.netWobble * 0.1;
-    arenaFx.heat = damp(arenaFx.heat, store.phase === 'rally' ? clamp(0.16 + (this.remoteState?.rally || 0) * 0.07, 0, 1) : 0, 2, dt);
+    arenaFx.heat = damp(arenaFx.heat, store.phase === 'exchange' ? clamp(0.16 + (this.remoteState?.exchange || 0) * 0.07, 0, 1) : 0, 2, dt);
     arenaFx.serveCharge = this.charge;
-    arenaFx.rallyN = this.remoteState?.rally || 0;
+    arenaFx.exchangeN = this.remoteState?.exchange || 0;
     decayFx(dt);
     if (store.phase === 'over') raiseFx('score', 0.2);
 

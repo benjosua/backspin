@@ -1,11 +1,11 @@
-# Rally recovered game
+# Backspin
 
-Standalone recovered source version. Includes local assets and modified light hall environment.
+Standalone source version. Includes local assets and modified light hall environment.
 
 ## Run
 
 ```bash
-cd /Users/ben/workspace/rally-recovered-game
+cd backspin
 npm install
 npm run dev
 ```
@@ -34,3 +34,24 @@ npm run docker:up
 ```
 
 Open `http://localhost:2567`.
+
+Health check:
+
+```bash
+curl http://localhost:2567/healthz
+```
+
+Public deployment notes:
+
+- Deploy with Dockerfile from repository root.
+- Expose port `2567`.
+- Set `NODE_ENV=production`.
+- Do not set `VITE_COLYSEUS_URL` for same-origin deploys; client uses current public origin.
+- Optional: set `ENABLE_MONITOR=true` only behind private auth/network controls.
+
+Pre-deploy verification:
+
+```bash
+npm run check
+docker build -t backspin .
+```

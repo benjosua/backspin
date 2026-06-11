@@ -1,7 +1,7 @@
 services:
-  rally:
+  backspin:
     build: .
-    image: rally-recovered-game:latest
+    image: backspin:latest
     ports:
       - "2567:2567"
     environment:

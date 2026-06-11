@@ -29,7 +29,7 @@ export function DesktopOnlyGate({ children }) {
   if (blocked) {
     return (
       <div className="desktop-only">
-        <div className="desktop-only-title" aria-hidden="true">RALLY</div>
+        <div className="desktop-only-title" aria-hidden="true">BACKSPIN</div>
         <p className="desktop-only-msg">This is a desktop-only experiment.</p>
         <p className="desktop-only-hint">Open on a computer to play.</p>
       </div>
