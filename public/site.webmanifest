@@ -1,0 +1,20 @@
+{
+  "name": "Rally",
+  "short_name": "Rally",
+  "description": "Minimalist 3D ping pong game experiment.",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#efe7d8",
+  "background_color": "#efe7d8",
+  "display": "standalone"
+}

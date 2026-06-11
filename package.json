@@ -1,0 +1,28 @@
+{
+  "name": "rally-recovered-game",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "docker:build": "docker build -t rally-recovered-game .",
+    "docker:run": "docker run --rm -p 2567:2567 rally-recovered-game",
+    "docker:up": "docker compose up --build"
+  },
+  "dependencies": {
+    "@colyseus/sdk": "^0.17.42",
+    "@react-three/drei": "latest",
+    "@react-three/fiber": "latest",
+    "@react-three/postprocessing": "^3.0.4",
+    "@vitejs/plugin-react": "latest",
+    "postprocessing": "^6.39.1",
+    "react": "latest",
+    "react-dom": "latest",
+    "three": "latest",
+    "troika-three-text": "latest",
+    "vite": "latest",
+    "zustand": "^5.0.14"
+  }
+}

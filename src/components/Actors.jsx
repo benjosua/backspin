@@ -1,0 +1,760 @@
+// Recovered actor cluster from production bundle name `rk` and helpers:
+// xO/SO glow textures, TO/MO paddles, FO ball trail, VO net, YO effects.
+
+import { Trail, RoundedBox } from '@react-three/drei';
+import { useFrame, useThree } from '@react-three/fiber';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  AdditiveBlending,
+  CanvasTexture,
+  Color,
+  DoubleSide,
+  NearestFilter,
+  NormalBlending,
+  Object3D,
+  ShaderMaterial,
+  Vector2,
+} from 'three';
+import { COLORS, CPU_PADDLE, getPaddle, PHYSICS, TABLE, TUNING } from '../constants.js';
+import { arenaFx, clampDt, damp } from '../fx-state.js';
+import { game, inputHud } from '../engine.js';
+import { networkGame } from '../network.js';
+import { DEBUG_MODE, useGameStore } from '../store.js';
+import { paddleFragmentShader, paddleVertexShader } from '../shaders.js';
+
+function makeGlowTexture(rgb, strong = false) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  if (strong) {
+    gradient.addColorStop(0, `rgba(${rgb},0.85)`);
+    gradient.addColorStop(0.55, `rgba(${rgb},0.45)`);
+    gradient.addColorStop(1, `rgba(${rgb},0)`);
+  } else {
+    gradient.addColorStop(0, `rgba(${rgb},0.8)`);
+    gradient.addColorStop(0.35, `rgba(${rgb},0.3)`);
+    gradient.addColorStop(1, `rgba(${rgb},0)`);
+  }
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 128, 128);
+  return new CanvasTexture(canvas);
+}
+
+function makeRingTexture(rgb = '255,255,255') {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = `rgba(${rgb},0.95)`;
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.arc(64, 64, 55, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(${rgb},0.3)`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(64, 64, 60, 0, Math.PI * 2);
+  ctx.stroke();
+  return new CanvasTexture(canvas);
+}
+
+function makePaddleFaceMaterial(paddle) {
+  return new ShaderMaterial({
+    defines: { STYLE: paddle.style },
+    uniforms: {
+      uTime: { value: 0 },
+      uCore: { value: new Color(paddle.colors.core) },
+      uEdge: { value: new Color(paddle.colors.edge) },
+      uAccent: { value: new Color(paddle.colors.accent) },
+      uCharge: { value: 0 },
+      uHit: { value: 0 },
+      uEnergy: { value: 0 },
+    },
+    vertexShader: paddleVertexShader,
+    fragmentShader: paddleFragmentShader,
+  });
+}
+
+const faceRadius = 0.56;
+const bevelY = 0.05;
+const facePlaneZ = 0.056;
+const discRadius = 0.5;
+const lathePoints = (() => {
+  const points = [new Vector2(0, -0.05), new Vector2(faceRadius - bevelY, -0.05)];
+  for (let i = 1; i < 16; i += 1) {
+    const angle = -Math.PI / 2 + (Math.PI * i) / 16;
+    points.push(new Vector2(faceRadius - bevelY + Math.cos(angle) * bevelY, Math.sin(angle) * bevelY));
+  }
+  points.push(new Vector2(faceRadius - bevelY, bevelY));
+  points.push(new Vector2(0, bevelY));
+  return points;
+})();
+
+function PaddleGeometry({ faceMat, paddle }) {
+  const colors = paddle.colors;
+  return (
+    <>
+      <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
+        <latheGeometry args={[lathePoints, 64]} />
+        <meshStandardMaterial color={colors.soft} roughness={0.62} metalness={0} />
+      </mesh>
+      <mesh position={[0, 0, facePlaneZ]}>
+        <circleGeometry args={[discRadius, 64]} />
+        <primitive object={faceMat} attach="material" />
+      </mesh>
+      <RoundedBox args={[0.17, 0.46, 0.11]} radius={0.045} smoothness={4} position={[0, -0.78, 0]} castShadow>
+        <meshStandardMaterial color={colors.handle} roughness={0.7} metalness={0} />
+      </RoundedBox>
+    </>
+  );
+}
+
+const Paddle = forwardRef(function Paddle({ paddle }, ref) {
+  const group = useRef(null);
+  const ring = useRef(null);
+  const glow = useRef(null);
+  const face = useMemo(() => makePaddleFaceMaterial(paddle), [paddle]);
+  const glowTexture = useMemo(() => makeGlowTexture(paddle.colors.glowRGB), [paddle.colors.glowRGB]);
+
+  useEffect(() => () => face.dispose(), [face]);
+  useImperativeHandle(ref, () => ({ group, ring, glow, face }), [face]);
+
+  return (
+    <group ref={group}>
+      <PaddleGeometry faceMat={face} paddle={paddle} />
+      <sprite ref={ring} position={[0, 0, 0.02]} scale={[1.6, 1.6, 1]}>
+        <spriteMaterial map={glowTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+      </sprite>
+      <sprite ref={glow} scale={[1.9, 1.9, 1]}>
+        <spriteMaterial map={glowTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+      </sprite>
+    </group>
+  );
+});
+
+function trailSignature(config) {
+  return `${config.length}|${config.decay}|${config.local}|${config.stride}|${config.interval}`;
+}
+function trailAttenuation(value) {
+  return value ** TUNING.ballTrail.attenuationPower;
+}
+
+const Ball = forwardRef(function Ball(_props, ref) {
+  const group = useRef(null);
+  const mesh = useRef(null);
+  const trail = useRef(null);
+  const signature = useRef(trailSignature(TUNING.ballTrail));
+  const phase = useRef(useGameStore.getState().phase);
+  const [version, bumpVersion] = useState(0);
+
+  useImperativeHandle(ref, () => ({ group, mesh, trail }), []);
+
+  useFrame(() => {
+    const config = TUNING.ballTrail;
+    const mat = trail.current?.material;
+    if (mat) {
+      mat.lineWidth = config.width * 0.1;
+      mat.color.set(config.color);
+    }
+    const nextSignature = trailSignature(config);
+    if (nextSignature !== signature.current) {
+      signature.current = nextSignature;
+      bumpVersion((value) => value + 1);
+    }
+    const nextPhase = useGameStore.getState().phase;
+    if ((phase.current === 'serve') !== (nextPhase === 'serve')) bumpVersion((value) => value + 1);
+    phase.current = nextPhase;
+  });
+
+  const config = TUNING.ballTrail;
+  return (
+    <group ref={group}>
+      <Trail
+        key={version}
+        ref={trail}
+        width={config.width}
+        length={config.length}
+        color={config.color}
+        decay={config.decay}
+        attenuation={trailAttenuation}
+        local={config.local}
+        stride={config.stride}
+        interval={config.interval}
+      >
+        <mesh ref={mesh}>
+          <sphereGeometry args={[TABLE.ballRadius, 24, 18]} />
+          <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.22} roughness={0.42} metalness={0} />
+        </mesh>
+      </Trail>
+    </group>
+  );
+});
+
+function makeNetTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 456;
+  canvas.height = 40;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'rgba(252,248,240,0.55)';
+  ctx.lineWidth = 1.5;
+  for (let x = 0; x <= canvas.width; x += 12) {
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, 0);
+    ctx.lineTo(x + 0.5, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += 8) {
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(canvas.width, y + 0.5);
+    ctx.stroke();
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.minFilter = texture.magFilter = NearestFilter;
+  return texture;
+}
+
+const netWidth = TABLE.halfWidth * 2;
+const netDepth = 0.045;
+const postX = TABLE.halfWidth + 0.08;
+const topBarWidth = TABLE.halfWidth * 2 + 0.16;
+
+const Net = forwardRef(function Net(_props, ref) {
+  const cloth = useRef(null);
+  const bars = useRef([]);
+  const posts = useRef([]);
+  const texture = useMemo(makeNetTexture, []);
+
+  useFrame(() => {
+    const { color, opacity } = TUNING.net;
+    if (cloth.current) {
+      cloth.current.opacity = opacity;
+      cloth.current.color.set(color);
+    }
+    for (const material of bars.current) material?.color.set(color);
+    for (const material of posts.current) material?.color.set(color);
+  });
+
+  return (
+    <group ref={ref}>
+      <mesh position={[0, TABLE.netHeight / 2, 0]}>
+        <boxGeometry args={[netWidth, TABLE.netHeight, netDepth]} />
+        <meshBasicMaterial ref={cloth} map={texture} color={TUNING.net.color} transparent opacity={TUNING.net.opacity} depthWrite={false} side={DoubleSide} />
+      </mesh>
+      <mesh position={[0, TABLE.netHeight, 0]}>
+        <boxGeometry args={[topBarWidth, 0.06, 0.04]} />
+        <meshStandardMaterial ref={(node) => { bars.current[0] = node; }} color={TUNING.net.color} roughness={0.55} metalness={0} />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[side * postX, (TABLE.netHeight + 0.04) / 2, 0]}>
+          <cylinderGeometry args={[0.05, 0.055, TABLE.netHeight + 0.04, 18]} />
+          <meshStandardMaterial ref={(node) => { posts.current[side < 0 ? 0 : 1] = node; }} color={TUNING.net.color} roughness={0.6} metalness={0} />
+        </mesh>
+      ))}
+      {[-1, 1].map((side) => (
+        <mesh key={`cap-${side}`} position={[side * postX, TABLE.netHeight + 0.04, 0]}>
+          <sphereGeometry args={[0.06, 18, 12]} />
+          <meshStandardMaterial ref={(node) => { posts.current[side < 0 ? 2 : 3] = node; }} color={TUNING.net.color} roughness={0.55} metalness={0} />
+        </mesh>
+      ))}
+    </group>
+  );
+});
+
+const randomBetween = (min, max) => min + Math.random() * (max - min);
+const sparkleCount = 56;
+const ringCount = 8;
+const shockCount = 5;
+const impactCount = 6;
+const confettiCount = 240;
+const confettiColors = ['#e8b25c', '#fff3dc', '#d27e63', '#c2935f', '#ffd98a', '#a8b598'];
+
+const Effects = forwardRef(function Effects(_props, ref) {
+  const sparkleTexture = useMemo(() => makeGlowTexture('255,238,210'), []);
+  const ringTexture = useMemo(() => makeRingTexture('255,236,196'), []);
+  const sparkles = useRef([]);
+  const rings = useRef([]);
+  const shocks = useRef([]);
+  const impacts = useRef([]);
+  const confetti = useRef(null);
+  const temp = useMemo(() => new Object3D(), []);
+  const confettiPalette = useMemo(() => confettiColors.map((color) => new Color(color)), []);
+  const sparkleState = useMemo(() => Array.from({ length: sparkleCount }, () => ({ life: 0, max: 1, vx: 0, vy: 0, vz: 0 })), []);
+  const ringState = useMemo(() => Array.from({ length: ringCount }, () => ({ life: 0 })), []);
+  const shockState = useMemo(() => Array.from({ length: shockCount }, () => ({ life: 0, max: 1, to: 1 })), []);
+  const impactState = useMemo(() => Array.from({ length: impactCount }, () => ({ life: 0, max: 1, to: 1 })), []);
+  const confettiState = useMemo(() => Array.from({ length: confettiCount }, () => ({
+    life: 0, max: 1, dead: true, landed: false,
+    x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0, w: 0, swf: 3, sc: 1,
+  })), []);
+
+  useEffect(() => {
+    const mesh = confetti.current;
+    if (!mesh) return;
+    temp.position.set(0, -10, 0);
+    temp.rotation.set(0, 0, 0);
+    temp.scale.set(0, 0, 0);
+    temp.updateMatrix();
+    for (let i = 0; i < confettiCount; i += 1) mesh.setMatrixAt(i, temp.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [temp]);
+
+  useImperativeHandle(ref, () => ({
+    burst(x, y, z, color, count = 7, speed = 3.4) {
+      let emitted = 0;
+      for (let i = 0; i < sparkleCount && emitted < count; i += 1) {
+        const state = sparkleState[i];
+        const sprite = sparkles.current[i];
+        if (state.life > 0 || !sprite) continue;
+        state.life = state.max = randomBetween(0.3, 0.55);
+        state.vx = randomBetween(-speed, speed);
+        state.vy = randomBetween(0.3, speed * 1.1);
+        state.vz = randomBetween(-speed, speed);
+        sprite.position.set(x, y, z);
+        sprite.material.color.set(color);
+        sprite.material.opacity = 1;
+        const size = randomBetween(0.28, 0.6);
+        sprite.scale.set(size, size, 1);
+        emitted += 1;
+      }
+    },
+    ring(x, z) {
+      for (let i = 0; i < ringCount; i += 1) {
+        if (ringState[i].life > 0) continue;
+        ringState[i].life = 0.5;
+        rings.current[i]?.position.set(x, 0.02, z);
+        return;
+      }
+    },
+    shock(x, y, z, color, to = 1.8) {
+      for (let i = 0; i < shockCount; i += 1) {
+        if (shockState[i].life > 0) continue;
+        shockState[i].life = shockState[i].max = 0.5;
+        shockState[i].to = to;
+        const sprite = shocks.current[i];
+        if (sprite) {
+          sprite.position.set(x, y, z);
+          sprite.material.color.set(color);
+          sprite.material.opacity = 0.9;
+          sprite.scale.set(0.3, 0.3, 1);
+        }
+        return;
+      }
+    },
+    impact(x, y, z, color, power = 0.6) {
+      for (let i = 0; i < impactCount; i += 1) {
+        if (impactState[i].life > 0) continue;
+        impactState[i].life = impactState[i].max = 0.26;
+        impactState[i].to = 1.4 + power * 2.6;
+        const sprite = impacts.current[i];
+        if (sprite) {
+          sprite.position.set(x, y, z);
+          sprite.material.color.set(color);
+          sprite.material.opacity = 0.95;
+          sprite.scale.set(0.4, 0.4, 1);
+        }
+        return;
+      }
+    },
+    confetti(x, y, z, count = 48, speed = 2.8) {
+      const mesh = confetti.current;
+      if (!mesh) return;
+      let emitted = 0;
+      for (let i = 0; i < confettiCount && emitted < count; i += 1) {
+        const state = confettiState[i];
+        if (state.life > 0) continue;
+        state.life = state.max = randomBetween(2.2, 3.6);
+        state.dead = false;
+        state.landed = false;
+        state.x = x + randomBetween(-0.5, 0.5);
+        state.y = y + randomBetween(-0.2, 0.2);
+        state.z = z + randomBetween(-0.5, 0.5);
+        state.vx = randomBetween(-speed, speed);
+        state.vy = randomBetween(1, 3.2);
+        state.vz = randomBetween(-speed, speed);
+        state.rx = randomBetween(0, Math.PI * 2);
+        state.ry = randomBetween(0, Math.PI * 2);
+        state.rz = randomBetween(0, Math.PI * 2);
+        state.sx = randomBetween(-8, 8);
+        state.sy = randomBetween(-8, 8);
+        state.sz = randomBetween(-8, 8);
+        state.w = randomBetween(0, Math.PI * 2);
+        state.swf = randomBetween(2.2, 4.4);
+        state.sc = randomBetween(0.7, 1.3);
+        mesh.setColorAt(i, confettiPalette[Math.floor(randomBetween(0, confettiPalette.length)) % confettiPalette.length]);
+        emitted += 1;
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    },
+  }), [confettiPalette, confettiState, impactState, ringState, shockState, sparkleState]);
+
+  useFrame((_, delta) => {
+    const dt = Math.min(delta, 0.033);
+    for (let i = 0; i < sparkleCount; i += 1) {
+      const state = sparkleState[i];
+      const sprite = sparkles.current[i];
+      if (!sprite) continue;
+      if (state.life <= 0) { if (sprite.material.opacity !== 0) sprite.material.opacity = 0; continue; }
+      state.life -= dt;
+      state.vy -= dt * 9;
+      sprite.position.x += state.vx * dt;
+      sprite.position.y += state.vy * dt;
+      sprite.position.z += state.vz * dt;
+      sprite.material.opacity = Math.max(0, (state.life / state.max) * 0.95);
+    }
+    for (let i = 0; i < ringCount; i += 1) {
+      const state = ringState[i];
+      const mesh = rings.current[i];
+      if (!mesh) continue;
+      if (state.life <= 0) { if (mesh.material.opacity !== 0) mesh.material.opacity = 0; continue; }
+      state.life -= dt;
+      const t = 1 - state.life / 0.5;
+      const scale = 0.3 + t * 1.7;
+      mesh.scale.set(scale, scale, scale);
+      mesh.material.opacity = (1 - t) * 0.5;
+    }
+    for (let i = 0; i < shockCount; i += 1) {
+      const state = shockState[i];
+      const sprite = shocks.current[i];
+      if (!sprite) continue;
+      if (state.life <= 0) { if (sprite.material.opacity !== 0) sprite.material.opacity = 0; continue; }
+      state.life -= dt;
+      const t = 1 - state.life / state.max;
+      const scale = 0.3 + t * state.to;
+      sprite.scale.set(scale, scale, 1);
+      sprite.material.opacity = (1 - t) * 0.9;
+    }
+    for (let i = 0; i < impactCount; i += 1) {
+      const state = impactState[i];
+      const sprite = impacts.current[i];
+      if (!sprite) continue;
+      if (state.life <= 0) { if (sprite.material.opacity !== 0) sprite.material.opacity = 0; continue; }
+      state.life -= dt;
+      const t = 1 - state.life / state.max;
+      const scale = 0.4 + t * state.to;
+      sprite.scale.set(scale, scale, 1);
+      sprite.material.opacity = (1 - t * t) * 0.95;
+    }
+
+    const mesh = confetti.current;
+    if (!mesh) return;
+    let dirty = false;
+    for (let i = 0; i < confettiCount; i += 1) {
+      const state = confettiState[i];
+      if (state.life <= 0) {
+        if (!state.dead) {
+          state.dead = true;
+          temp.position.set(0, -10, 0);
+          temp.scale.set(0, 0, 0);
+          temp.updateMatrix();
+          mesh.setMatrixAt(i, temp.matrix);
+          dirty = true;
+        }
+        continue;
+      }
+      state.life -= dt;
+      if (state.landed) {
+        const target = Math.round((state.rx - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
+        const ease = Math.min(1, dt * 9);
+        state.rx += (target - state.rx) * ease;
+        state.ry += -state.ry * ease * 0.4;
+        state.rz += state.sz * dt * 0.18;
+      } else {
+        const drag = Math.exp(dt * -1.9);
+        state.vx *= drag;
+        state.vz *= drag;
+        state.vy = Math.max(state.vy - dt * 5.2, -1.75);
+        state.x += (state.vx + Math.sin((state.max - state.life) * state.swf + state.w) * 0.6) * dt;
+        state.y += state.vy * dt;
+        state.z += state.vz * dt;
+        state.rx += state.sx * dt;
+        state.ry += state.sy * dt;
+        state.rz += state.sz * dt;
+        const floor = Math.abs(state.x) < TABLE.halfWidth && Math.abs(state.z) < TABLE.halfLength ? 0.025 : -2.1;
+        if (state.y <= floor && state.vy < 0) {
+          state.y = floor;
+          state.landed = true;
+          state.life = Math.min(state.life, randomBetween(0.7, 1.5));
+        }
+      }
+      const alphaScale = Math.min(1, state.life / 0.45);
+      temp.position.set(state.x, state.y, state.z);
+      temp.rotation.set(state.rx, state.ry, state.rz);
+      temp.scale.set(state.sc * alphaScale, state.sc * alphaScale, 1);
+      temp.updateMatrix();
+      mesh.setMatrixAt(i, temp.matrix);
+      dirty = true;
+    }
+    if (dirty) mesh.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <group>
+      {sparkleState.map((_, index) => (
+        <sprite key={`s${index}`} ref={(node) => { sparkles.current[index] = node; }} scale={[0.4, 0.4, 1]}>
+          <spriteMaterial map={sparkleTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </sprite>
+      ))}
+      {ringState.map((_, index) => (
+        <mesh key={`r${index}`} ref={(node) => { rings.current[index] = node; }} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+          <ringGeometry args={[0.32, 0.45, 44]} />
+          <meshBasicMaterial color="#f3d9a0" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+      ))}
+      {shockState.map((_, index) => (
+        <sprite key={`k${index}`} ref={(node) => { shocks.current[index] = node; }} scale={[0.3, 0.3, 1]}>
+          <spriteMaterial map={ringTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </sprite>
+      ))}
+      {impactState.map((_, index) => (
+        <sprite key={`i${index}`} ref={(node) => { impacts.current[index] = node; }} scale={[0.4, 0.4, 1]}>
+          <spriteMaterial map={sparkleTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </sprite>
+      ))}
+      <instancedMesh ref={confetti} args={[undefined, undefined, confettiCount]} frustumCulled={false}>
+        <planeGeometry args={[0.085, 0.13]} />
+        <meshBasicMaterial side={DoubleSide} />
+      </instancedMesh>
+    </group>
+  );
+});
+
+function shouldHideCursor() {
+  const { started, menuOpen, phase } = useGameStore.getState();
+  return started && !menuOpen && phase !== 'over' && !DEBUG_MODE;
+}
+function preventDefault(event) {
+  event.preventDefault();
+}
+function setCursor(element, value) {
+  element.style.cursor = value;
+}
+
+const targetAspect = 16 / 9;
+const maxFov = 70;
+const maxScale = 1.3;
+function updateCamera(camera, engine) {
+  const aspect = camera.aspect;
+  let fov = engine.camFov;
+  let scale = 1;
+  if (aspect < targetAspect) {
+    const tan = Math.tan((engine.camFov * Math.PI) / 360) * targetAspect;
+    fov = Math.min(maxFov, (Math.atan(tan / aspect) * 360) / Math.PI);
+    scale = Math.min(maxScale, tan / (Math.tan((fov * Math.PI) / 360) * aspect));
+  }
+  camera.position.set(
+    engine.camLX + (engine.camX - engine.camLX) * scale,
+    engine.camLY + (engine.camY - engine.camLY) * scale,
+    engine.camLZ + (engine.camZ - engine.camLZ) * scale,
+  );
+  camera.lookAt(engine.camLX, engine.camLY, engine.camLZ);
+  if (Math.abs(camera.fov - fov) > 0.01) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
+}
+
+export function Actors() {
+  const { camera, gl } = useThree();
+  const player = useRef(null);
+  const ai = useRef(null);
+  const ball = useRef(null);
+  const net = useRef(null);
+  const effects = useRef(null);
+  const shadow = useRef(null);
+  const marker = useRef(null);
+  const visibleGroup = useRef(null);
+  const visibleAmount = useRef(Number(DEBUG_MODE));
+  const trailAmount = useRef(0);
+  const phase = useRef('serve');
+  const shadowTexture = useMemo(() => makeGlowTexture('70,58,38', true), []);
+  const resetNonce = useGameStore((state) => state.resetNonce);
+  const mode = useGameStore((state) => state.mode);
+  const paddleId = useGameStore((state) => state.paddle);
+  const paddle = useMemo(() => getPaddle(paddleId), [paddleId]);
+
+  useEffect(() => {
+    const element = gl.domElement;
+    let exitingPointerLock = false;
+    const refreshCursor = () => {
+      const hidden = shouldHideCursor();
+      inputHud.cursorVisible = hidden;
+      setCursor(element, hidden ? 'none' : '');
+    };
+    const exitPointerLock = () => {
+      if (document.pointerLockElement === element) {
+        exitingPointerLock = true;
+        document.exitPointerLock();
+      }
+    };
+    const currentGame = () => (useGameStore.getState().mode === 'online' ? networkGame : game);
+    const onMove = (event) => currentGame().onPointerMove(event);
+    const onDown = (event) => {
+      currentGame().onPointerDown(event);
+      if (event.pointerType === 'mouse' && shouldHideCursor() && document.pointerLockElement !== element) {
+        element.requestPointerLock();
+      }
+    };
+    const onUp = (event) => currentGame().onPointerUp(event);
+    const onKeyDown = (event) => {
+      if (event.code === 'Escape') {
+        const state = useGameStore.getState();
+        if (!state.started || state.phase === 'over') return;
+        if (state.menuOpen) state.closeMenu();
+        else state.openMenu();
+        return;
+      }
+      currentGame().onKeyDown(event);
+    };
+    const onKeyUp = (event) => currentGame().onKeyUp(event);
+    const onLockChange = () => {
+      const locked = document.pointerLockElement === element;
+      currentGame().setPointerLocked(locked);
+      if (!locked && !exitingPointerLock) {
+        const state = useGameStore.getState();
+        if (state.started && !state.menuOpen && state.phase !== 'over') state.openMenu();
+      }
+      exitingPointerLock = false;
+      refreshCursor();
+    };
+
+    element.addEventListener('pointermove', onMove);
+    element.addEventListener('pointerdown', onDown);
+    element.addEventListener('contextmenu', preventDefault);
+    document.addEventListener('pointerlockchange', onLockChange);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    refreshCursor();
+    const unsubscribe = useGameStore.subscribe(() => {
+      if (!shouldHideCursor()) exitPointerLock();
+      refreshCursor();
+    });
+    return () => {
+      element.removeEventListener('pointermove', onMove);
+      element.removeEventListener('pointerdown', onDown);
+      element.removeEventListener('contextmenu', preventDefault);
+      document.removeEventListener('pointerlockchange', onLockChange);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      unsubscribe();
+      if (document.pointerLockElement === element) document.exitPointerLock();
+      game.setPointerLocked(false);
+      networkGame.setPointerLocked(false);
+      inputHud.cursorVisible = false;
+      setCursor(element, '');
+    };
+  }, [gl.domElement]);
+
+  useEffect(() => {
+    if (mode !== 'online') game.newMatch();
+  }, [resetNonce, mode]);
+
+  useFrame((state, delta) => {
+    const activeGame = useGameStore.getState().mode === 'online' ? networkGame : game;
+    activeGame.update(delta, state.clock.elapsedTime, camera, effects.current);
+
+    const now = state.clock.elapsedTime;
+    const active = DEBUG_MODE || useGameStore.getState().started;
+    const fade = visibleAmount.current = damp(visibleAmount.current, Number(active), active ? 7 : 12, clampDt(delta));
+    if (visibleGroup.current) visibleGroup.current.visible = fade > 0.01;
+    const scale = Math.max(0.001, fade);
+
+    if (player.current?.group.current) {
+      const mesh = player.current.group.current;
+      const source = activeGame.player;
+      mesh.scale.setScalar(scale);
+      mesh.position.set(source.x, source.y, source.z);
+      mesh.rotation.x = source.rotX;
+      mesh.rotation.z = source.rotZ;
+      const uniforms = player.current.face.uniforms;
+      uniforms.uTime.value = now;
+      uniforms.uHit.value = source.flash;
+      uniforms.uCharge.value = inputHud.charge;
+      uniforms.uEnergy.value = arenaFx.heat * 0.5;
+      player.current.glow.current.material.opacity = source.flash * 0.55;
+      player.current.ring.current.material.opacity = inputHud.charge * 0.5;
+      const ringScale = 1.5 + inputHud.charge * 0.7 + Math.sin(now * 10) * inputHud.charge * 0.06;
+      player.current.ring.current.scale.set(ringScale, ringScale, 1);
+    }
+
+    if (ai.current?.group.current) {
+      const mesh = ai.current.group.current;
+      const source = activeGame.ai;
+      mesh.scale.setScalar(scale);
+      mesh.position.set(source.x, source.y, source.z);
+      mesh.rotation.x = source.rotX;
+      mesh.rotation.z = source.rotZ;
+      const energy = Math.max(0, activeGame.brain.confidence - 0.5);
+      const uniforms = ai.current.face.uniforms;
+      uniforms.uTime.value = now;
+      uniforms.uHit.value = source.flash;
+      uniforms.uCharge.value = source.tell;
+      uniforms.uEnergy.value = energy * 0.7;
+      ai.current.glow.current.material.opacity = source.flash * 0.55;
+      ai.current.ring.current.material.opacity = source.tell * 0.5;
+      const ringScale = 1.5 + source.tell * 0.7 + Math.sin(now * 10) * source.tell * 0.06;
+      ai.current.ring.current.scale.set(ringScale, ringScale, 1);
+    }
+
+    if (ball.current?.group.current) {
+      ball.current.group.current.scale.setScalar(scale);
+      ball.current.group.current.position.copy(activeGame.ball);
+      ball.current.mesh.current.rotation.x = activeGame.ballRotX;
+      ball.current.mesh.current.rotation.y = activeGame.ballRotY;
+      const speed = activeGame.vel.length();
+      ball.current.mesh.current.material.emissiveIntensity = 0.22 + Math.min(speed / 26, 1) * 0.55;
+      const currentPhase = useGameStore.getState().phase;
+      const serving = currentPhase === 'serve';
+      if (serving !== (phase.current === 'serve')) trailAmount.current = 0;
+      phase.current = currentPhase;
+      const showTrail = active && fade > 0.95 && !serving;
+      const trailFade = trailAmount.current = damp(trailAmount.current, Number(showTrail), showTrail ? 9 : 16, clampDt(delta));
+      if (ball.current.trail.current) {
+        ball.current.trail.current.visible = trailFade > 0.002 || showTrail;
+        const material = ball.current.trail.current.material;
+        if (material) {
+          material.transparent = true;
+          material.depthWrite = false;
+          material.opacity = trailFade;
+        }
+      }
+    }
+
+    if (shadow.current) {
+      shadow.current.position.set(activeGame.shadow.x, 0.02, activeGame.shadow.z);
+      shadow.current.material.opacity = activeGame.shadow.op * fade;
+      shadow.current.scale.set(activeGame.shadow.scale, activeGame.shadow.scale, 1);
+    }
+    if (marker.current) {
+      marker.current.position.set(activeGame.marker.x, 0.03, activeGame.marker.z);
+      marker.current.material.opacity = activeGame.marker.op * fade;
+    }
+    if (net.current) net.current.rotation.x = activeGame.netRotX;
+
+    updateCamera(camera, activeGame);
+  });
+
+  return (
+    <group>
+      <group ref={visibleGroup} visible={DEBUG_MODE}>
+        <Paddle ref={player} paddle={paddle} />
+        <Paddle ref={ai} paddle={CPU_PADDLE} />
+        <Ball ref={ball} />
+        <sprite ref={shadow} position={[0, 0.02, 0]} scale={[0.6, 0.6, 1]}>
+          <spriteMaterial map={shadowTexture} transparent opacity={0} blending={NormalBlending} depthWrite={false} />
+        </sprite>
+        <mesh ref={marker} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+          <ringGeometry args={[0.34, 0.42, 40]} />
+          <meshBasicMaterial color={COLORS.player} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+        </mesh>
+      </group>
+      <Net ref={net} />
+      <Effects ref={effects} />
+    </group>
+  );
+}

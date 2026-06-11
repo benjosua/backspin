@@ -1,0 +1,11 @@
+services:
+  rally:
+    build: .
+    image: rally-recovered-game:latest
+    ports:
+      - "2567:2567"
+    environment:
+      NODE_ENV: production
+      PORT: 2567
+      CLIENT_DIST_DIR: /app/dist
+    restart: unless-stopped
