@@ -4,7 +4,8 @@ import { useProgress } from '@react-three/drei';
 import { useEffect, useRef, useState } from 'react';
 import { BOTS, COLORS, PLAYER_SPEED, TABLE } from '../constants.js';
 import { inputHud } from '../engine.js';
-import { networkGame } from '../network.js';
+import { fetchMyMatches, networkGame } from '../network.js';
+import { replayGame } from '../replay.js';
 import { DEBUG_MODE, RENDER_SCALES, useGameStore } from '../store.js';
 
 const MATCH_TO = 11;
@@ -15,6 +16,18 @@ const isCoarsePointer = typeof window !== 'undefined' && window.matchMedia('(poi
 
 function stop(event) {
   event.stopPropagation();
+}
+
+function formatReplayDate(value) {
+  if (!value) return 'LIVE';
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function formatReplayClock(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 export function ChargeDial() {
@@ -198,6 +211,143 @@ export function PerformanceSettings() {
   );
 }
 
+function ReplayBrowser() {
+  const open = useGameStore((state) => state.replayBrowserOpen);
+  const authUser = useGameStore((state) => state.authUser);
+  const authToken = useGameStore((state) => state.authToken);
+  const replayStatus = useGameStore((state) => state.replayStatus);
+  const replayError = useGameStore((state) => state.replayError);
+  const closeReplayBrowser = useGameStore((state) => state.closeReplayBrowser);
+  const setReplayError = useGameStore((state) => state.setReplayError);
+  const [matches, setMatches] = useState([]);
+  const [lookup, setLookup] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || !authUser) return;
+    let cancelled = false;
+    setBusy(true);
+    fetchMyMatches(20, 0)
+      .then((data) => { if (!cancelled) setMatches(data.matches || []); })
+      .catch((error) => { if (!cancelled) setReplayError(error?.message || 'Could not load replays'); })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+  }, [open, authUser, setReplayError]);
+
+  if (!open) return null;
+  const play = async (matchId, viewerSide = 'p1') => {
+    try {
+      await replayGame.load(matchId, authToken, viewerSide);
+    } catch {
+      // replayGame already writes error state.
+    }
+  };
+  const directId = lookup.trim();
+  return (
+    <div className="replay-veil" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <section className="replay-browser">
+        <header className="replay-browser-head">
+          <div>
+            <span>REPLAY ROOM</span>
+            <h2>MY REPLAYS</h2>
+          </div>
+          <button onClick={closeReplayBrowser}>CLOSE</button>
+        </header>
+        <div className="replay-lookup">
+          <input value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="MATCH ID" aria-label="match id" />
+          <button disabled={!directId || replayStatus === 'loading'} onClick={() => play(directId)}>PLAY ID</button>
+        </div>
+        {busy && <div className="replay-empty">LOADING MATCHES...</div>}
+        {replayError && replayStatus === 'error' && <div className="replay-error">{replayError}</div>}
+        <div className="replay-list">
+          {!busy && matches.length === 0 && <div className="replay-empty">NO SAVED REPLAYS YET</div>}
+          {matches.map((item) => {
+            const match = item.match;
+            const viewerWon = match.winner === item.viewerSide;
+            return (
+              <article className={`replay-card ${viewerWon ? 'won' : 'lost'}`} key={match.id}>
+                <div className="replay-card-top">
+                  <span>{formatReplayDate(match.endedAt || match.startedAt)}</span>
+                  <b>{match.ranked ? 'RANKED' : match.mode.toUpperCase()}</b>
+                </div>
+                <div className="replay-scoreline">
+                  <span>{match.p1Name}</span>
+                  <strong>{match.p1Score}—{match.p2Score}</strong>
+                  <span>{match.p2Name}</span>
+                </div>
+                <div className="replay-stats">
+                  <span>{item.stats.winners} WINNERS</span>
+                  <span>{item.stats.smashes} SMASHES</span>
+                  <span>{item.stats.longestRally} LONGEST</span>
+                </div>
+                <button disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
+                  {item.replayReady ? 'PLAY' : 'NOT READY'}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReplayControls() {
+  const mode = useGameStore((state) => state.mode);
+  const match = useGameStore((state) => state.replayMatch);
+  const stats = useGameStore((state) => state.replayStats);
+  const timeMs = useGameStore((state) => state.replayTimeMs);
+  const durationMs = useGameStore((state) => state.replayDurationMs);
+  const playing = useGameStore((state) => state.replayPlaying);
+  const speed = useGameStore((state) => state.replaySpeed);
+  const setReplayPlaying = useGameStore((state) => state.setReplayPlaying);
+  const setReplaySpeed = useGameStore((state) => state.setReplaySpeed);
+  if (mode !== 'replay' || !match) return null;
+  const points = replayGame.playerRef?.points || [];
+  const shots = replayGame.playerRef?.shots || [];
+  return (
+    <div className="replay-controls" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <div className="replay-meta">
+        <span>{match.ranked ? 'RANKED REPLAY' : `${match.mode.toUpperCase()} REPLAY`}</span>
+        <b>{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
+        {stats && <em>{stats.totalPoints} PTS · {stats.totalShots} SHOTS · {stats.longestRally} RALLY</em>}
+      </div>
+      <div className="replay-transport">
+        <button onClick={() => setReplayPlaying(!playing)}>{playing ? 'PAUSE' : 'PLAY'}</button>
+        <span>{formatReplayClock(timeMs)}</span>
+        <input
+          type="range"
+          min="0"
+          max={Math.max(1, durationMs)}
+          value={Math.min(timeMs, Math.max(1, durationMs))}
+          onChange={(event) => {
+            setReplayPlaying(false);
+            replayGame.seek(Number(event.target.value));
+          }}
+          aria-label="replay timeline"
+        />
+        <span>{formatReplayClock(durationMs)}</span>
+        {[0.5, 1, 2].map((value) => (
+          <button key={value} className={speed === value ? 'on' : ''} onClick={() => setReplaySpeed(value)}>{value}x</button>
+        ))}
+        <button onClick={() => replayGame.exit()}>EXIT</button>
+      </div>
+      <div className="replay-jumps">
+        {points.slice(0, 8).map((point) => (
+          <button key={point.id} onClick={() => { setReplayPlaying(false); replayGame.jumpToPoint(point.seq); }}>
+            P{point.seq} · {point.p1Score}-{point.p2Score}
+          </button>
+        ))}
+        {shots.slice(0, 8).map((shot) => (
+          <button key={shot.id} onClick={() => { setReplayPlaying(false); replayGame.jumpToShot(shot.id); }}>
+            S{shot.seq}{shot.smash ? ' · SMASH' : ''}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ModePicker() {
   const started = useGameStore((state) => state.started);
   const revealed = useGameStore((state) => state.revealed);
@@ -211,6 +361,7 @@ export function ModePicker() {
   const difficulty = useGameStore((state) => state.difficulty);
   const setPlayerName = useGameStore((state) => state.setPlayerName);
   const setNetworkStatus = useGameStore((state) => state.setNetworkStatus);
+  const openReplayBrowser = useGameStore((state) => state.openReplayBrowser);
   const start = useGameStore((state) => state.start);
   const [code, setCode] = useState('');
   const [email, setEmail] = useState('');
@@ -251,6 +402,7 @@ export function ModePicker() {
   const showTestAi = import.meta.env.DEV || DEBUG_MODE;
   if (started || !revealed) return null;
   return (
+    <>
     <div className="mode-picker" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
       <div className="mode-title">MODE</div>
       <div className="mode-row name">
@@ -289,6 +441,7 @@ export function ModePicker() {
         <button onClick={start} disabled={busy}>OFFLINE</button>
         <button onClick={() => run(() => networkGame.quickMatch())} disabled={busy}>QUICK MATCH</button>
         <button onClick={() => run(() => networkGame.rankedMatch())} disabled={busy || !authUser}>RANKED</button>
+        {authUser && <button onClick={openReplayBrowser} disabled={busy}>REPLAYS</button>}
         {showTestAi && <button onClick={() => run(() => networkGame.testAiMatch(difficulty))} disabled={busy}>TEST AI ONLINE</button>}
       </div>
       <div className="mode-row private">
@@ -310,6 +463,8 @@ export function ModePicker() {
         {(!leaderboard || leaderboard.length === 0) && <div className="leaderboard-empty">NO RANKED MATCHES YET</div>}
       </div>
     </div>
+    <ReplayBrowser />
+    </>
   );
 }
 
@@ -333,11 +488,17 @@ export function Hud() {
   const playerName = useGameStore((state) => state.playerName);
   const onlineOpponentName = useGameStore((state) => state.opponentName);
   const onlineRematchRequested = useGameStore((state) => state.onlineRematchRequested);
+  const currentMatchId = useGameStore((state) => state.currentMatchId);
+  const authToken = useGameStore((state) => state.authToken);
+  const onlineSide = useGameStore((state) => state.onlineSide);
+  const replayMatch = useGameStore((state) => state.replayMatch);
+  const replayViewerSide = useGameStore((state) => state.replayViewerSide);
 
   const bot = BOTS.find((item) => item.id === difficulty) ?? BOTS[1];
   const botName = bot.name;
-  const youName = playerName || 'PLAYER';
-  const opponentName = mode === 'online' ? (onlineOpponentName || 'OPPONENT') : botName;
+  const replayLocalIsP1 = replayViewerSide !== 'p2';
+  const youName = mode === 'replay' && replayMatch ? (replayLocalIsP1 ? replayMatch.p1Name : replayMatch.p2Name) : playerName || 'PLAYER';
+  const opponentName = mode === 'replay' && replayMatch ? (replayLocalIsP1 ? replayMatch.p2Name : replayMatch.p1Name) : mode === 'online' ? (onlineOpponentName || 'OPPONENT') : botName;
   const playerWon = winner === 'player';
   const delta = Math.abs(scoreP - scoreAI);
   const flavor = mode === 'online'
@@ -360,6 +521,7 @@ export function Hud() {
 
   return (
     <div className="hud">
+      <ReplayControls />
       {started && menuOpen && phase !== 'over' && <div className="pause-veil" aria-hidden />}
 
       {started && (
@@ -436,7 +598,7 @@ export function Hud() {
         </div>
       )}
 
-      {phase === 'over' && (
+      {phase === 'over' && mode !== 'replay' && (
         <div className={`over ${playerWon ? 'win' : 'lose'}`}>
           <div className="over-kicker">{playerWon ? 'GAME · SET · MATCH' : 'MATCH OVER'}</div>
           <div className="over-title">{playerWon ? 'YOU WIN' : `${opponentName} WINS`}</div>
@@ -469,6 +631,11 @@ export function Hud() {
                 <button className="rematch" onClick={newGame}>REMATCH&nbsp;·&nbsp;{botName}</button>
               )}
               <button className="over-home" onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>↩&nbsp;&nbsp;HOME</button>
+              {currentMatchId && (
+                <button className="over-home" onClick={() => replayGame.load(currentMatchId, authToken, onlineSide || 'p1').catch(() => {})}>
+                  ▶&nbsp;&nbsp;WATCH&nbsp;REPLAY
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -66,6 +66,10 @@ async function refreshLeaderboard() {
   return leaderboard;
 }
 
+export async function fetchMyMatches(limit = 20, offset = 0) {
+  return apiFetch(`/api/me/matches?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`);
+}
+
 async function syncAccountName(name) {
   if (!client.auth.token) return null;
   const { user, profile } = await apiFetch('/api/me/name', {
@@ -353,6 +357,7 @@ class NetworkGame {
       opponentName: opponentName || 'OPPONENT',
       networkStatus: status,
       roomCode: s.roomCode,
+      currentMatchId: s.matchId || '',
     });
 
     const flip = localIsP1 ? 1 : -1;

@@ -98,6 +98,17 @@ const server = defineServer({
             }
         });
 
+        app.get("/api/me/matches", auth.middleware(), async (req: any, res: any) => {
+            try {
+                const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 20));
+                const offset = Math.max(0, Number(req.query.offset) || 0);
+                const matches = await matchStore.listMatchesForUser(req.auth.id, limit, offset);
+                res.json({ matches, nextOffset: matches.length === limit ? offset + limit : null });
+            } catch (error: any) {
+                res.status(400).json({ error: error?.message || "matches_lookup_failed" });
+            }
+        });
+
         app.get("/api/leaderboard", async (req, res) => {
             const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 50));
             res.json({ leaderboard: await rankedStore.leaderboard(limit) });
@@ -118,6 +129,11 @@ const server = defineServer({
 
         app.get("/healthz", (req, res) => {
             res.status(200).json({ ok: true });
+        });
+
+        app.use((error: any, _req: any, res: any, next: any) => {
+            if (error?.name === "UnauthorizedError") return res.status(401).json({ error: "unauthorized" });
+            next(error);
         });
 
         if (process.env.ENABLE_MONITOR === "true") {

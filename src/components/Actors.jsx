@@ -21,6 +21,7 @@ import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { getDebugTime } from '../debug-tuning.js';
 import { game, inputHud } from '../engine.js';
 import { networkGame } from '../network.js';
+import { replayGame } from '../replay.js';
 import { DEBUG_MODE, useGameStore } from '../store.js';
 import { paddleFragmentShader, paddleVertexShader } from '../shaders.js';
 import { createPaddleHeadShape, paddleHeadExtrude } from '../paddleShape.js';
@@ -560,7 +561,7 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
 
 function shouldHideCursor() {
   const { started, menuOpen, phase } = useGameStore.getState();
-  return started && !menuOpen && phase !== 'over' && !DEBUG_MODE;
+  return started && useGameStore.getState().mode !== 'replay' && !menuOpen && phase !== 'over' && !DEBUG_MODE;
 }
 function preventDefault(event) {
   event.preventDefault();
@@ -632,7 +633,12 @@ export function Actors() {
         document.exitPointerLock();
       }
     };
-    const currentGame = () => (useGameStore.getState().mode === 'online' ? networkGame : game);
+    const currentGame = () => {
+      const mode = useGameStore.getState().mode;
+      if (mode === 'online') return networkGame;
+      if (mode === 'replay') return replayGame;
+      return game;
+    };
     const onMove = (event) => currentGame().onPointerMove(event);
     const onDown = (event) => {
       currentGame().onPointerDown(event);
@@ -644,6 +650,10 @@ export function Actors() {
     const onKeyDown = (event) => {
       if (event.code === 'Escape') {
         const state = useGameStore.getState();
+        if (state.mode === 'replay') {
+          replayGame.exit();
+          return;
+        }
         if (!state.started || state.phase === 'over') return;
         if (state.menuOpen) state.closeMenu();
         else state.openMenu();
@@ -700,7 +710,7 @@ export function Actors() {
 
   useFrame((state, delta) => {
     const store = useGameStore.getState();
-    const activeGame = store.mode === 'online' ? networkGame : game;
+    const activeGame = store.mode === 'online' ? networkGame : store.mode === 'replay' ? replayGame : game;
     activeGame.update(delta, getDebugTime(state.clock.elapsedTime), camera, effects.current);
 
     const now = getDebugTime(state.clock.elapsedTime);

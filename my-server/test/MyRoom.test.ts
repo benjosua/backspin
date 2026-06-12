@@ -649,6 +649,40 @@ describe("backspin room", () => {
     assert.strictEqual(summary.match.id, matchId);
     assert.strictEqual(summary.stats.totalPoints, 1);
 
+    const myMatchesResponse = await fetch(`${serverHttp(colyseus)}/api/me/matches`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
+    const myMatches = await myMatchesResponse.json();
+    assert.strictEqual(myMatchesResponse.status, 200);
+    assert.strictEqual(myMatches.matches.length, 1);
+    assert.strictEqual(myMatches.matches[0].match.id, matchId);
+    assert.strictEqual(myMatches.matches[0].viewerSide, "p1");
+    assert.strictEqual(myMatches.matches[0].replayReady, true);
+    assert.strictEqual(myMatches.matches[0].stats.totalPoints, 1);
+
+    const p2MatchesResponse = await fetch(`${serverHttp(colyseus)}/api/me/matches`, { headers: { Authorization: `Bearer ${p2Account.token}` } });
+    const p2Matches = await p2MatchesResponse.json();
+    assert.strictEqual(p2MatchesResponse.status, 200);
+    assert.strictEqual(p2Matches.matches[0].viewerSide, "p2");
+
+    const noAuthMatchesResponse = await fetch(`${serverHttp(colyseus)}/api/me/matches`);
+    assert.strictEqual(noAuthMatchesResponse.status, 401);
+
+    const noReplay = await matchStore.createMatch({
+      roomId: "manual-no-replay",
+      matchSeq: 1,
+      mode: "ranked",
+      ranked: true,
+      p1UserId: p1Account.user.id,
+      p2UserId: p2Account.user.id,
+      p1Name: "REPLAY1",
+      p2Name: "REPLAY2",
+    });
+    await matchStore.finishMatch({ matchId: noReplay.id, endedReason: "completed", winner: "p2", p1Score: 9, p2Score: 11, durationMs: 1000, totalPoints: 2, totalShots: 0 });
+    const mixedMatchesResponse = await fetch(`${serverHttp(colyseus)}/api/me/matches`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
+    const mixedMatches = await mixedMatchesResponse.json();
+    const noReplayRow = mixedMatches.matches.find((item: any) => item.match.id === noReplay.id);
+    assert.ok(noReplayRow);
+    assert.strictEqual(noReplayRow.replayReady, false);
+
     const replayResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/replay`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
     const replayBody = await replayResponse.json();
     assert.strictEqual(replayResponse.status, 200);

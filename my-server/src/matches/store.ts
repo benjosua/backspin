@@ -117,6 +117,11 @@ export type MatchDetails = {
   shots: MatchShot[];
 };
 
+export type MatchListItem = Pick<MatchDetails, "match" | "stats"> & {
+  viewerSide: Side;
+  replayReady: boolean;
+};
+
 export type MatchReplay = MatchDetails & {
   chunks: ReplayChunkInput[];
 };
@@ -137,6 +142,7 @@ export interface MatchStore {
   getMatchDetails(matchId: string): Promise<MatchDetails | null>;
   getReplay(matchId: string): Promise<MatchReplay | null>;
   getShotReplay(matchId: string, shotId: string): Promise<ShotReplay | null>;
+  listMatchesForUser(userId: string, limit: number, offset: number): Promise<MatchListItem[]>;
   resetForTests?(): Promise<void>;
 }
 
@@ -399,6 +405,32 @@ class PostgresMatchStore implements MatchStore {
     const frames = replay.chunks.flatMap((chunk) => chunk.frames).filter((frame) => frame[0] >= from && frame[0] <= until);
     return { match: replay.match, shot, frames };
   }
+
+  async listMatchesForUser(userId: string, limit: number, offset: number) {
+    await this.init();
+    const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const result = await this.pool.query(
+      `SELECT m.*, EXISTS (
+         SELECT 1 FROM match_replay_chunks c WHERE c.match_id = m.id LIMIT 1
+       ) AS replay_ready
+       FROM matches m
+       WHERE m.ended_at IS NOT NULL AND (m.p1_user_id = $1 OR m.p2_user_id = $1)
+       ORDER BY m.ended_at DESC, m.started_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, safeLimit, safeOffset],
+    );
+    return Promise.all(result.rows.map(async (row) => {
+      const details = await this.getMatchDetails(row.id);
+      if (!details) return null;
+      return {
+        match: details.match,
+        stats: details.stats,
+        viewerSide: details.match.p1UserId === userId ? "p1" as Side : "p2" as Side,
+        replayReady: Boolean(row.replay_ready),
+      };
+    })).then((items) => items.filter(Boolean) as MatchListItem[]);
+  }
 }
 
 class MemoryMatchStore implements MatchStore {
@@ -504,6 +536,25 @@ class MemoryMatchStore implements MatchStore {
     const until = Math.min(nextShot?.timeMs ?? Number.POSITIVE_INFINITY, nextPoint?.timeMs ?? Number.POSITIVE_INFINITY, shot.timeMs + 3000);
     const frames = replay.chunks.flatMap((chunk) => chunk.frames).filter((frame) => frame[0] >= from && frame[0] <= until);
     return { match: replay.match, shot, frames };
+  }
+
+  async listMatchesForUser(userId: string, limit: number, offset: number) {
+    const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    return [...this.matches.values()]
+      .filter((match) => match.endedAt && (match.p1UserId === userId || match.p2UserId === userId))
+      .sort((a, b) => String(b.endedAt || b.startedAt).localeCompare(String(a.endedAt || a.startedAt)))
+      .slice(safeOffset, safeOffset + safeLimit)
+      .map((match) => {
+        const points = [...(this.points.get(match.id) || [])];
+        const shots = [...(this.shots.get(match.id) || [])];
+        return {
+          match,
+          stats: stats(points, shots),
+          viewerSide: match.p1UserId === userId ? "p1" as Side : "p2" as Side,
+          replayReady: Boolean((this.chunks.get(match.id) || []).length),
+        };
+      });
   }
 }
 

@@ -57,10 +57,9 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private replay = new MatchReplayRecorder();
 
   static async onAuth(_token: string, options: any, context: any) {
-    if (!options?.ranked) return true;
-    const user = await authUserFromToken(context?.token);
-    if (!user) throw new ServerError(ErrorCode.AUTH_FAILED, "ranked_requires_sign_in");
-    return user;
+    const user = await authUserFromToken(context?.token).catch((_error: unknown): null => null);
+    if (options?.ranked && !user) throw new ServerError(ErrorCode.AUTH_FAILED, "ranked_requires_sign_in");
+    return user || true;
   }
 
   async onCreate(options: any) {
@@ -122,10 +121,10 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     if (side === "p1") this.state.p1 = client.sessionId;
     else this.state.p2 = client.sessionId;
     this.inputs.set(client.sessionId, this.makeInput());
+    const user = auth && auth !== true ? auth : null;
+    if (user?.id) this.rankedUsers.set(side, user.id);
     if (this.state.ranked) {
-      const user = auth && auth !== true ? auth : null;
       if (!user?.id) throw new ServerError(ErrorCode.AUTH_FAILED, "ranked_requires_sign_in");
-      this.rankedUsers.set(side, user.id);
       options = { ...(options || {}), name: user.name };
     }
     this.handleProfile(client, options || {});
@@ -251,6 +250,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.serveBounceCount = 0;
     this.state.scoreP1 = 0;
     this.state.scoreP2 = 0;
+    this.state.matchId = "";
     this.state.winner = "";
     this.state.pointWinner = "";
     this.state.pointReason = "";
@@ -273,7 +273,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
 
   private ensureReplayStarted() {
     if (this.activePlayerCount() < 2 || this.replay.active) return;
-    this.replay.start({
+    const matchId = this.replay.start({
       roomId: this.roomId,
       matchSeq: this.matchSeq,
       mode: this.state.mode,
@@ -283,6 +283,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       p1Name: this.state.p1Name,
       p2Name: this.state.p2Name,
     });
+    this.state.matchId = matchId;
   }
 
   private finalizeReplay(endedReason: string) {
