@@ -1,6 +1,6 @@
 import { Room, Client, ServerError, ErrorCode } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
-import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
+import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, getEmote, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
 import { authUserFromToken, type AuthUser } from "../auth/config.js";
 import { rankedStore } from "../ranked/store.js";
 
@@ -13,6 +13,7 @@ const TICK = NET.tickMs;
 const PATCH_RATE = NET.patchMs;
 const FIXED_DT = NET.tickMs / 1000;
 const ROOM_CODE_CHANNEL = "$backspin_private_codes";
+const EMOTE_COOLDOWN_MS = 800;
 
 type Side = "p1" | "p2";
 type Input = { targetX: number; targetY: number; aimX: number; aimDepth: number; vx: number; vy: number; speed: number; charging: boolean; chargeStartedAt: number; lastInputAt: number };
@@ -30,6 +31,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   maxClients = 2;
   private inputs = new Map<string, Input>();
   private rankedUsers = new Map<Side, string>();
+  private emoteSentAt = new Map<string, number>();
   private rankedMatchRecorded = false;
   private lastHitter: Side | null = null;
   private bouncedReceiver = false;
@@ -64,6 +66,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.onMessage("charge", (client, message) => this.handleCharge(client, message));
     this.onMessage("serve", (client) => this.handleServe(client));
     this.onMessage("profile", (client, message) => this.handleProfile(client, message));
+    this.onMessage("emote", (client, message) => this.handleEmote(client, message));
   }
 
   private async generateRoomCode(requested?: string) {
@@ -113,6 +116,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   onLeave(client: Client) {
     const leaver = this.sideOf(client);
     this.inputs.delete(client.sessionId);
+    this.emoteSentAt.delete(client.sessionId);
     if (leaver === "p1") this.state.p1 = "";
     else if (leaver === "p2") this.state.p2 = "";
 
@@ -167,6 +171,19 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const charging = Boolean(message?.charging);
     if (charging && !input.charging) input.chargeStartedAt = nowSeconds();
     input.charging = charging;
+  }
+
+  private handleEmote(client: Client, message: any) {
+    const side = this.sideOf(client);
+    if (!side) return;
+    const emoteId = String(message?.emoteId ?? message?.id ?? "");
+    const emoji = getEmote(emoteId);
+    if (!emoji) return;
+    const now = Date.now();
+    const lastSentAt = this.emoteSentAt.get(client.sessionId) || 0;
+    if (now - lastSentAt < EMOTE_COOLDOWN_MS) return;
+    this.emoteSentAt.set(client.sessionId, now);
+    this.broadcast("emote", { side, emoteId, emoji });
   }
 
   private currentServer(): Side {

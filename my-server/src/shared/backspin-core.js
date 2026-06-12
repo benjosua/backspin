@@ -32,6 +32,17 @@ export const NET = {
   paddleInset: 0.5,
 };
 
+export const EMOTES = {
+  1: '👍',
+  2: '😅',
+  3: '🔥',
+  4: '👋',
+};
+
+export function getEmote(id) {
+  return EMOTES[String(id)] || null;
+}
+
 export const CONTACT = {
   reachX: 0.95,
   minY: 0.05,

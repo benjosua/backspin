@@ -93,6 +93,8 @@ export const useGameStore = create((set, get) => ({
   networkError: '',
   roomCode: '',
   onlineSide: null,
+  emotes: { player: null, ai: null },
+  emoteSeq: 0,
   authUser: null,
   authToken: null,
   rankedProfile: null,
@@ -110,6 +112,7 @@ export const useGameStore = create((set, get) => ({
       networkError: '',
       roomCode: '',
       onlineSide: null,
+      emotes: { player: null, ai: null },
       opponentName: 'OPPONENT',
       scoreP: 0,
       scoreAI: 0,
@@ -129,6 +132,7 @@ export const useGameStore = create((set, get) => ({
       networkError: '',
       roomCode: '',
       onlineSide: null,
+      emotes: { player: null, ai: null },
       opponentName: 'OPPONENT',
       scoreP: 0,
       scoreAI: 0,
@@ -204,12 +208,21 @@ export const useGameStore = create((set, get) => ({
       winner: null,
       flashText: '',
       flashId: 0,
+      emotes: { player: null, ai: null },
       menuOpen: false,
       resetNonce: state.resetNonce + 1,
     })),
 
   setNetworkStatus: (networkStatus, networkError = '') => set({ networkStatus, networkError }),
   setOnlineSide: (onlineSide, roomCode) => set({ onlineSide, roomCode }),
+  showEmote: (side, emoji) =>
+    set((state) => {
+      const emote = { id: state.emoteSeq + 1, emoji, at: performance.now() };
+      return {
+        emoteSeq: emote.id,
+        emotes: { ...state.emotes, [side]: emote },
+      };
+    }),
   setAuth: (authUser, authToken) => set({ authUser, authToken }),
   setRankedProfile: (rankedProfile) => set({ rankedProfile }),
   setLeaderboard: (leaderboard) => set({ leaderboard }),

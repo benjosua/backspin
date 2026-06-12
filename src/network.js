@@ -5,7 +5,7 @@ import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js
 import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
 import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
-import { NET, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
+import { NET, getEmote, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
 const SERVER_GRAVITY = 30;
@@ -27,6 +27,14 @@ const browserNeedsPointerScale = (() => {
 const pointerScale = () => (browserNeedsPointerScale && window.devicePixelRatio) || 1;
 const playerName = () => useGameStore.getState().playerName || 'PLAYER';
 const authHeader = () => (client.auth.token ? { Authorization: `Bearer ${client.auth.token}` } : {});
+const emoteKeyId = (code) => {
+  const match = /^(?:Digit|Numpad)([1-4])$/.exec(code || '');
+  return match?.[1] || null;
+};
+const isTypingTarget = (target) => {
+  const tag = target?.tagName?.toLowerCase?.();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable;
+};
 
 async function apiFetch(path, options = {}) {
   const response = await fetch(`${httpBase}${path}`, {
@@ -247,6 +255,11 @@ class NetworkGame {
       if (message.type === 'point') playMenu(message.winner === this.side);
       if (message.type === 'net') playNet();
     });
+    room.onMessage('emote', (message) => {
+      const emoji = getEmote(message?.emoteId) || message?.emoji;
+      if (!emoji) return;
+      useGameStore.getState().showEmote(message.side === this.side ? 'player' : 'ai', emoji);
+    });
     room.onStateChange((state) => this.syncFromState(state));
     room.onDrop(() => useGameStore.getState().setNetworkStatus('reconnecting'));
     room.onReconnect(() => useGameStore.getState().setNetworkStatus('connected'));
@@ -258,6 +271,12 @@ class NetworkGame {
 
   sendProfile() {
     this.room?.send('profile', { name: playerName() });
+  }
+
+  sendEmote(emoteId) {
+    if (!getEmote(emoteId)) return false;
+    this.room?.send('emote', { emoteId });
+    return true;
   }
 
   async disconnect(goHome = true) {
@@ -384,6 +403,15 @@ class NetworkGame {
     if (state.phase === 'serve' && state.server === 'player') this.room?.send('serve');
   }
   onKeyDown(event) {
+    const emoteId = emoteKeyId(event.code);
+    if (emoteId) {
+      const state = useGameStore.getState();
+      if (!event.repeat && !isTypingTarget(event.target) && state.mode === 'online' && state.networkStatus === 'connected' && !state.menuOpen && state.phase !== 'over') {
+        this.sendEmote(emoteId);
+        event.preventDefault();
+      }
+      return;
+    }
     if (event.code === 'ArrowLeft' || event.code === 'KeyA') { this.keys.l = true; this.usingKeys = true; }
     if (event.code === 'ArrowRight' || event.code === 'KeyD') { this.keys.r = true; this.usingKeys = true; }
     if (event.code === 'ArrowUp' || event.code === 'KeyW') this.kTop = 0.85;

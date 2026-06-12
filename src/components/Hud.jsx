@@ -2,7 +2,7 @@
 
 import { useProgress } from '@react-three/drei';
 import { useEffect, useRef, useState } from 'react';
-import { BOTS, COLORS, PLAYER_SPEED } from '../constants.js';
+import { BOTS, COLORS, PLAYER_SPEED, TABLE } from '../constants.js';
 import { inputHud } from '../engine.js';
 import { networkGame } from '../network.js';
 import { RENDER_SCALES, useGameStore } from '../store.js';
@@ -73,6 +73,57 @@ export function ChargeDial() {
       <div className="aim-readout" ref={aim}>AIM CENTER · MID · SPIN 0 · POWER 0</div>
       <div className="callout" ref={callout} />
     </>
+  );
+}
+
+const emoteLifeMs = 1400;
+const emotePaddleRange = TABLE.halfWidth + 0.5;
+
+export function EmoteBubbles() {
+  const player = useRef(null);
+  const opponent = useRef(null);
+  const emotes = useGameStore((state) => state.emotes);
+  const emotesRef = useRef(emotes);
+
+  useEffect(() => {
+    emotesRef.current = emotes;
+  }, [emotes]);
+
+  useEffect(() => {
+    let raf = 0;
+    const place = (node, emote, racket, top) => {
+      if (!node || !emote) {
+        if (node) node.style.opacity = '0';
+        return;
+      }
+      const age = performance.now() - emote.at;
+      if (age >= emoteLifeMs) {
+        node.style.opacity = '0';
+        return;
+      }
+      const t = Math.max(0, Math.min(1, age / emoteLifeMs));
+      const x = Math.max(-1, Math.min(1, (racket?.x || 0) / emotePaddleRange));
+      node.textContent = emote.emoji;
+      node.style.left = `${50 + x * 23}%`;
+      node.style.top = top;
+      node.style.opacity = String(Math.sin((1 - t) * Math.PI * 0.5));
+      node.style.transform = `translate(-50%, -50%) translateY(${-28 * t}px) scale(${0.82 + Math.sin(Math.min(1, t * 1.8) * Math.PI) * 0.22})`;
+    };
+    const tick = () => {
+      const latest = emotesRef.current || {};
+      place(player.current, latest.player, networkGame.player, '67%');
+      place(opponent.current, latest.ai, networkGame.ai, '34%');
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <div className="emote-layer" aria-hidden>
+      <div ref={player} className="emote-bubble you" />
+      <div ref={opponent} className="emote-bubble opponent" />
+    </div>
   );
 }
 
@@ -330,6 +381,7 @@ export function Hud() {
             </div>
           )}
           <ChargeDial />
+          {mode === 'online' && <EmoteBubbles />}
           {firstServe && <div className="hint">MOVE&nbsp;TO&nbsp;AIM&nbsp;·&nbsp;HOLD&nbsp;CHARGE&nbsp;·&nbsp;FLICK&nbsp;SPIN</div>}
           {!isCoarsePointer && phase !== 'over' && !menuOpen && (
             <div className="esc-hint" aria-hidden>
@@ -365,6 +417,7 @@ export function Hud() {
             <li><b>Spin</b><span>{isCoarsePointer ? 'Flick at contact' : 'W / S'}</span></li>
             <li><b>Smash</b><span>Charge a high ball</span></li>
             <li><b>Serve</b><span>Release</span></li>
+            {mode === 'online' && <li><b>Emote</b><span>1 / 2 / 3 / 4</span></li>}
             {!isCoarsePointer && <li><b>Pause · back</b><span>Esc</span></li>}
           </ul>
           <PlayerSpeedSetting />

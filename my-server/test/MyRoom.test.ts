@@ -191,6 +191,70 @@ describe("backspin room", () => {
     assert.ok(-state.spinSide > 0, "p2 local view flips server spin back to positive/right");
   });
 
+  it("broadcasts valid online emotes with the sender side", async () => {
+    const room = await colyseus.createRoom("backspin", { mode: "public" });
+    const p1 = await colyseus.connectTo(room, { name: "P1" });
+    const p2 = await colyseus.connectTo(room, { name: "P2" });
+    const p1Emotes: any[] = [];
+    const p2Emotes: any[] = [];
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+    p1.onMessage("emote", (message) => p1Emotes.push(message));
+    p2.onMessage("emote", (message) => p2Emotes.push(message));
+
+    await waitFor(() => p1.state?.toJSON?.().joined === 2 && p2.state?.toJSON?.().joined === 2, "both players joined");
+    p1.send("emote", { emoteId: "1" });
+
+    await waitFor(() => p1Emotes.length === 1 && p2Emotes.length === 1, "emote broadcast");
+    assert.deepStrictEqual(p1Emotes[0], { side: "p1", emoteId: "1", emoji: "👍" });
+    assert.deepStrictEqual(p2Emotes[0], { side: "p1", emoteId: "1", emoji: "👍" });
+    await p1.leave();
+    await p2.leave();
+  });
+
+  it("ignores invalid online emotes", async () => {
+    const room = await colyseus.createRoom("backspin", { mode: "public" });
+    const p1 = await colyseus.connectTo(room, { name: "P1" });
+    const p2 = await colyseus.connectTo(room, { name: "P2" });
+    const p1Emotes: any[] = [];
+    const p2Emotes: any[] = [];
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+    p1.onMessage("emote", (message) => p1Emotes.push(message));
+    p2.onMessage("emote", (message) => p2Emotes.push(message));
+
+    await waitFor(() => p1.state?.toJSON?.().joined === 2 && p2.state?.toJSON?.().joined === 2, "both players joined");
+    p1.send("emote", { emoteId: "9" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.strictEqual(p1Emotes.length, 0);
+    assert.strictEqual(p2Emotes.length, 0);
+    await p1.leave();
+    await p2.leave();
+  });
+
+  it("rate-limits spammed online emotes", async () => {
+    const room = await colyseus.createRoom("backspin", { mode: "public" });
+    const p1 = await colyseus.connectTo(room, { name: "P1" });
+    const p2 = await colyseus.connectTo(room, { name: "P2" });
+    const p2Emotes: any[] = [];
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+    p1.onMessage("emote", () => {});
+    p2.onMessage("emote", (message) => p2Emotes.push(message));
+
+    await waitFor(() => p1.state?.toJSON?.().joined === 2 && p2.state?.toJSON?.().joined === 2, "both players joined");
+    p1.send("emote", { emoteId: "1" });
+    await waitFor(() => p2Emotes.length === 1, "first emote broadcast");
+    p1.send("emote", { emoteId: "2" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.strictEqual(p2Emotes.length, 1);
+    assert.deepStrictEqual(p2Emotes[0], { side: "p1", emoteId: "1", emoji: "👍" });
+    await p1.leave();
+    await p2.leave();
+  });
+
   it("clamps extreme serves into legal two-bounce reachable serves", () => {
     const sides = ["p1", "p2"] as const;
     const aimXs = [-1, 0, 1];
