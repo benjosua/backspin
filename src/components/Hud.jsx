@@ -224,7 +224,12 @@ function ReplayBrowser() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!open || !authUser) return;
+    if (!open) return;
+    if (!authUser) {
+      setMatches([]);
+      setBusy(false);
+      return;
+    }
     let cancelled = false;
     setBusy(true);
     fetchMyMatches(20, 0)
@@ -249,7 +254,7 @@ function ReplayBrowser() {
         <header className="replay-browser-head">
           <div>
             <span>REPLAY ROOM</span>
-            <h2>MY REPLAYS</h2>
+            <h2>LOAD REPLAY</h2>
           </div>
           <button onClick={closeReplayBrowser}>CLOSE</button>
         </header>
@@ -260,7 +265,7 @@ function ReplayBrowser() {
         {busy && <div className="replay-empty">LOADING MATCHES...</div>}
         {replayError && replayStatus === 'error' && <div className="replay-error">{replayError}</div>}
         <div className="replay-list">
-          {!busy && matches.length === 0 && <div className="replay-empty">NO SAVED REPLAYS YET</div>}
+          {!busy && matches.length === 0 && <div className="replay-empty">{authUser ? 'NO SAVED REPLAYS YET' : 'PASTE A MATCH ID TO WATCH'}</div>}
           {matches.map((item) => {
             const match = item.match;
             const viewerWon = match.winner === item.viewerSide;
@@ -441,7 +446,7 @@ export function ModePicker() {
         <button onClick={start} disabled={busy}>OFFLINE</button>
         <button onClick={() => run(() => networkGame.quickMatch())} disabled={busy}>QUICK MATCH</button>
         <button onClick={() => run(() => networkGame.rankedMatch())} disabled={busy || !authUser}>RANKED</button>
-        {authUser && <button onClick={openReplayBrowser} disabled={busy}>REPLAYS</button>}
+        <button onClick={openReplayBrowser} disabled={busy}>REPLAYS</button>
         {showTestAi && <button onClick={() => run(() => networkGame.testAiMatch(difficulty))} disabled={busy}>TEST AI ONLINE</button>}
       </div>
       <div className="mode-row private">

@@ -688,6 +688,11 @@ describe("backspin room", () => {
     assert.strictEqual(replayResponse.status, 200);
     assert.ok(replayBody.chunks[0].frames.length >= 1);
 
+    const p2ReplayResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/replay`, { headers: { Authorization: `Bearer ${p2Account.token}` } });
+    const p2ReplayBody = await p2ReplayResponse.json();
+    assert.strictEqual(p2ReplayResponse.status, 200);
+    assert.deepStrictEqual(p2ReplayBody.chunks, replayBody.chunks);
+
     const shotId = replay.shots[0].id;
     const shotResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/shots/${encodeURIComponent(shotId)}/replay`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
     const shotBody = await shotResponse.json();
@@ -697,8 +702,39 @@ describe("backspin room", () => {
 
     const unauthorizedResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}`);
     assert.strictEqual(unauthorizedResponse.status, 403);
+    const unauthorizedReplayResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/replay`);
+    assert.strictEqual(unauthorizedReplayResponse.status, 403);
     const missingResponse = await fetch(`${serverHttp(colyseus)}/api/matches/not-a-match`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
     assert.strictEqual(missingResponse.status, 404);
+
+    await p1.leave();
+    await p2.leave();
+  });
+
+  it("lets anyone with a non-ranked match id load the shared replay", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "private" });
+    const p1 = await colyseus.connectTo(room, { name: "LINK1" });
+    const p2 = await colyseus.connectTo(room, { name: "LINK2" });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+
+    await waitFor(() => room.clients.length === 2 && Boolean(room.replay.currentMatchId), "non-ranked replay started");
+    const matchId = room.replay.currentMatchId;
+    room.stepSimulation(1 / 60);
+    room.state.scoreP1 = 10;
+    room.point("p1", "WINNER");
+
+    await waitFor(async () => {
+      const replay = await matchStore.getReplay(matchId);
+      return Boolean(replay?.match.endedAt && replay.chunks.length >= 1);
+    }, "persisted non-ranked replay", 3000);
+
+    const replayResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/replay`);
+    const replayBody = await replayResponse.json();
+    assert.strictEqual(replayResponse.status, 200);
+    assert.strictEqual(replayBody.match.id, matchId);
+    assert.strictEqual(replayBody.match.ranked, false);
+    assert.ok(replayBody.chunks[0].frames.length >= 1);
 
     await p1.leave();
     await p2.leave();

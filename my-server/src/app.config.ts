@@ -33,7 +33,7 @@ async function optionalAuthUser(req: any) {
 }
 
 function canReadMatch(match: MatchSummary, user: any) {
-    if (match.mode === "public" && !match.ranked) return true;
+    if (!match.ranked) return true;
     return Boolean(user?.id && (match.p1UserId === user.id || match.p2UserId === user.id));
 }
 
