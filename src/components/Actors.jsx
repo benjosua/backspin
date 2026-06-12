@@ -266,7 +266,6 @@ const Net = forwardRef(function Net(_props, ref) {
 });
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
-const ballGhostCount = Math.max(3, Math.round(2 + perfSettings.fxScale * 4));
 const scoreTextCount = 4;
 const sparkleCount = perfSettings.sparkleCount;
 const ringCount = perfSettings.ringCount;
@@ -599,52 +598,6 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
   );
 });
 
-const BallGhosts = forwardRef(function BallGhosts({ enabled }, ref) {
-  const mesh = useRef(null);
-  const temp = useMemo(() => new Object3D(), []);
-  const history = useMemo(() => Array.from({ length: ballGhostCount }, () => new Vector3()), []);
-  const cursor = useRef(0);
-  const primed = useRef(false);
-
-  useImperativeHandle(ref, () => ({
-    update(position, speed, fade, active) {
-      const instance = mesh.current;
-      if (!instance) return;
-
-      const strength = enabled && active ? Math.min(1, Math.max(0, (speed - 7) / 15)) * fade : 0;
-      if (!primed.current) {
-        for (const item of history) item.copy(position);
-        primed.current = true;
-      }
-
-      cursor.current = (cursor.current + 1) % ballGhostCount;
-      history[cursor.current].copy(position);
-
-      for (let i = 0; i < ballGhostCount; i += 1) {
-        const age = (i + 1) / ballGhostCount;
-        const index = (cursor.current - i - 1 + ballGhostCount) % ballGhostCount;
-        const scale = TABLE.ballRadius * (1.02 - age * 0.42) * strength;
-        temp.position.copy(history[index]);
-        temp.scale.setScalar(Math.max(0.001, scale));
-        temp.updateMatrix();
-        instance.setMatrixAt(i, temp.matrix);
-      }
-
-      instance.material.opacity = 0.28 * strength;
-      instance.instanceMatrix.needsUpdate = true;
-    },
-  }), [enabled, history, temp]);
-
-  if (!enabled) return null;
-
-  return (
-    <instancedMesh ref={mesh} args={[undefined, undefined, ballGhostCount]} frustumCulled={false}>
-      <sphereGeometry args={[1, 18, 12]} />
-      <meshBasicMaterial color={COLORS.ball} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} toneMapped={false} />
-    </instancedMesh>
-  );
-});
-
 function shouldHideCursor() {
   const { started, menuOpen, phase } = useGameStore.getState();
   return started && !menuOpen && phase !== 'over' && !DEBUG_MODE;
@@ -685,7 +638,6 @@ export function Actors() {
   const player = useRef(null);
   const ai = useRef(null);
   const ball = useRef(null);
-  const ballGhosts = useRef(null);
   const net = useRef(null);
   const effects = useRef(null);
   const shadow = useRef(null);
@@ -848,7 +800,6 @@ export function Actors() {
       if (serving !== (phase.current === 'serve')) trailAmount.current = 0;
       phase.current = currentPhase;
       const showTrail = active && fade > 0.95 && !serving;
-      ballGhosts.current?.update(activeGame.ball, speed, fade, showTrail);
       const trailFade = trailAmount.current = damp(trailAmount.current, Number(showTrail), showTrail ? 9 : 16, clampDt(delta));
       if (ball.current.trail.current) {
         ball.current.trail.current.visible = trailFade > 0.002 || showTrail;
@@ -923,7 +874,6 @@ export function Actors() {
       <group ref={visibleGroup} visible={DEBUG_MODE}>
         <Paddle ref={player} paddle={PLAYER_PADDLE} />
         <Paddle ref={ai} paddle={CPU_PADDLE} />
-        <BallGhosts ref={ballGhosts} enabled={extraFx} />
         <Ball ref={ball} extraFx={extraFx} />
         <sprite ref={shadow} position={[0, 0.02, 0]} scale={[0.6, 0.6, 1]}>
           <spriteMaterial map={shadowTexture} transparent opacity={0} blending={NormalBlending} depthWrite={false} />
