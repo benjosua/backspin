@@ -9,7 +9,9 @@ import {
   NET,
   maxReachableContactX,
   resolvePlayerShot,
+  simulateLegalServe,
   simulateReceiverContact,
+  solveLegalServe,
   solveReachableShot,
   solveShot,
   stepPaddleX,
@@ -187,6 +189,90 @@ describe("backspin room", () => {
 
     assert.ok(state.spinSide < 0, `expected server spin to be negative after p2 local-right flip, got ${state.spinSide}`);
     assert.ok(-state.spinSide > 0, "p2 local view flips server spin back to positive/right");
+  });
+
+  it("clamps extreme serves into legal two-bounce reachable serves", () => {
+    const sides = ["p1", "p2"] as const;
+    const aimXs = [-1, 0, 1];
+    const aimDepths = [0, 1];
+
+    for (const side of sides) {
+      const zDir = side === "p1" ? -1 : 1;
+      const ball = { x: side === "p1" ? -0.9 : 0.9, y: 0.96, z: side === "p1" ? 4.35 : -4.35 };
+      for (const aimX of aimXs) for (const aimDepth of aimDepths) {
+        const targetX = aimX * 2.85 * 0.96;
+        const targetZ = zDir * (0.08 + aimDepth * 0.88) * 4.75;
+        const serve = solveLegalServe(ball, targetX, targetZ, 0.46, 0.8, aimX * 0.8, side);
+        const contact = simulateLegalServe(ball, serve.velocity, serve.topSpin, serve.sideSpin, side);
+
+        assert.strictEqual(contact.ok, true, `${side} aim=${aimX} depth=${aimDepth} reason=${contact.reason}`);
+        assert.ok(contact.bounces[0].z * zDir < 0, "first serve bounce must be on server side");
+        assert.ok(contact.bounces[1].z * zDir > 0, "second serve bounce must be on receiver side");
+        assert.ok(Math.abs(contact.contact!.x) <= maxReachableContactX(), `serve contact outside reach: ${contact.contact!.x}`);
+      }
+    }
+  });
+
+  it("keeps p2 legal serve sidespin direction after client coordinate flip", () => {
+    const ball = { x: 0, y: 0.96, z: -4.35 };
+    const serve = solveLegalServe(ball, 0, 2.2, 0.56, 0.15, -0.72, "p2");
+
+    assert.ok(serve.sideSpin < 0, `expected server spin to stay negative, got ${serve.sideSpin}`);
+    assert.strictEqual(simulateLegalServe(ball, serve.velocity, serve.topSpin, serve.sideSpin, "p2").ok, true);
+  });
+
+  it("does not fault a legal serve on the first server-side bounce", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "public" });
+    const p1 = await colyseus.connectTo(room, { name: "P1" });
+    const p2 = await colyseus.connectTo(room, { name: "P2" });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+
+    await waitFor(() => room.clients.length === 2, "players joined");
+    room.state.phase = "exchange";
+    room.lastHitter = "p1";
+    room.bouncedReceiver = false;
+    room.serveBounceCount = 0;
+    room.state.ballX = 0;
+    room.state.ballY = 0.13;
+    room.state.ballZ = 1.2;
+    room.state.ballVx = 0;
+    room.state.ballVy = -1;
+    room.state.ballVz = -2;
+    room.update(1 / 60);
+
+    assert.strictEqual(room.state.phase, "exchange");
+    assert.strictEqual(room.state.pointReason, "");
+    assert.strictEqual(room.serveBounceCount, 1);
+    await p1.leave();
+    await p2.leave();
+  });
+
+  it("faults a serve that lands first on the receiver side", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "public" });
+    const p1 = await colyseus.connectTo(room, { name: "P1" });
+    const p2 = await colyseus.connectTo(room, { name: "P2" });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+
+    await waitFor(() => room.clients.length === 2, "players joined");
+    room.state.phase = "exchange";
+    room.lastHitter = "p1";
+    room.bouncedReceiver = false;
+    room.serveBounceCount = 0;
+    room.state.ballX = 0;
+    room.state.ballY = 0.13;
+    room.state.ballZ = -1.2;
+    room.state.ballVx = 0;
+    room.state.ballVy = -1;
+    room.state.ballVz = -2;
+    room.update(1 / 60);
+
+    assert.strictEqual(room.state.phase, "point");
+    assert.strictEqual(room.state.pointWinner, "p2");
+    assert.strictEqual(room.state.pointReason, "FAULT");
+    await p1.leave();
+    await p2.leave();
   });
 
   it("registers account users and exposes initial rank", async () => {

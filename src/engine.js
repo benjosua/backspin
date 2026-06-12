@@ -14,7 +14,7 @@ import {
 import { DEBUG_MODE, debugFlags, randomSide, useGameStore } from './store.js';
 import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js';
 import { initAudio, playBounce, playCharge, playHit, playMenu, playNet } from './audio.js';
-import { predictBounceKick, resolvePlayerShot, simulateReceiverContact, solveReachableShot } from '../shared/backspin-core.js';
+import { predictBounceKick, resolvePlayerShot, simulateReceiverContact, solveLegalServe, solveReachableShot } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
 const rand = () => Math.random();
@@ -116,6 +116,7 @@ export class GameEngine {
     this.firstServer = randomSide();
     this.lastHitter = null;
     this.bouncedReceiver = false;
+    this.serveBounceCount = 0;
     this.exchange = 0;
     this.pointTimer = 0;
     this.aiServeTimer = 0;
@@ -249,6 +250,7 @@ export class GameEngine {
     this.exchange = 0;
     this.lastHitter = null;
     this.bouncedReceiver = false;
+    this.serveBounceCount = 0;
     this.vel.set(0, 0, 0);
     this.spin.top = 0;
     this.spin.side = 0;
@@ -354,7 +356,7 @@ export class GameEngine {
       flightTime = clamp(0.68 - bot.serveSpin * 0.14 - skill * 0.12, 0.46, 0.68);
     }
     if (!isPlayer && this.tier.minDepth != null && topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
-    const served = solveReachableShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin, server);
+    const served = solveLegalServe(ball, targetX, targetZ, flightTime, topSpin, sideSpin, server);
     topSpin = served.topSpin;
     sideSpin = served.sideSpin;
     targetX = served.targetX;
@@ -363,6 +365,7 @@ export class GameEngine {
     this.vel.copy(served.velocity);
     this.lastHitter = server;
     this.bouncedReceiver = false;
+    this.serveBounceCount = 0;
     this.charge = 0;
     if (server === 'player' && !attract) this.reactTimer = this.tier.serveReact ?? this.tier.reactionDelay;
     useGameStore.getState().setPhase('exchange');
@@ -619,6 +622,18 @@ export class GameEngine {
     arenaFx.ix = ball.x;
     arenaFx.iz = ball.z;
     playBounce();
+    if (this.lastHitter && this.exchange === 0) {
+      this.serveBounceCount += 1;
+      if (this.serveBounceCount === 1) {
+        if (side !== this.lastHitter) this.point(otherSide(this.lastHitter), 'FAULT');
+      } else if (this.serveBounceCount === 2) {
+        if (side === this.lastHitter) this.point(otherSide(this.lastHitter), 'FAULT');
+        else this.bouncedReceiver = true;
+      } else {
+        this.point(this.lastHitter, 'WINNER');
+      }
+      return true;
+    }
     if (this.lastHitter && side === this.lastHitter) this.point(otherSide(this.lastHitter), 'FAULT');
     else if (this.bouncedReceiver) this.point(this.lastHitter, 'WINNER');
     else this.bouncedReceiver = true;
@@ -880,10 +895,12 @@ export class GameEngine {
           this.checkRacketHit('ai', prevZ);
         }
         if (this.vel.y < 0 && ball.y <= TABLE.ballRadius && !this.handleBounce() && ball.y < -1.2) {
-          this.point(this.bouncedReceiver ? this.lastHitter : otherSide(this.lastHitter), this.bouncedReceiver ? 'WINNER' : 'OUT');
+          const serveFault = this.lastHitter && this.exchange === 0 && this.serveBounceCount < 2;
+          this.point(serveFault ? otherSide(this.lastHitter) : this.bouncedReceiver ? this.lastHitter : otherSide(this.lastHitter), serveFault ? 'FAULT' : this.bouncedReceiver ? 'WINNER' : 'OUT');
         }
         if (Math.abs(ball.z) > 7.95 || Math.abs(ball.x) > 6.05 || ball.y < -1.6) {
-          this.point(this.bouncedReceiver ? this.lastHitter : otherSide(this.lastHitter), this.bouncedReceiver ? 'WINNER' : 'OUT');
+          const serveFault = this.lastHitter && this.exchange === 0 && this.serveBounceCount < 2;
+          this.point(serveFault ? otherSide(this.lastHitter) : this.bouncedReceiver ? this.lastHitter : otherSide(this.lastHitter), serveFault ? 'FAULT' : this.bouncedReceiver ? 'WINNER' : 'OUT');
         }
       } else {
         if (ball.y <= TABLE.ballRadius && this.vel.y < 0 && Math.abs(ball.x) <= TABLE.halfWidth && Math.abs(ball.z) <= TABLE.halfLength) {

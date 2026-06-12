@@ -1,6 +1,6 @@
 import { Room, Client, ServerError, ErrorCode } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
-import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveReachableShot, stepPaddleX } from "../shared/backspin-core.js";
+import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
 import { authUserFromToken, type AuthUser } from "../auth/config.js";
 import { rankedStore } from "../ranked/store.js";
 
@@ -33,6 +33,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private rankedMatchRecorded = false;
   private lastHitter: Side | null = null;
   private bouncedReceiver = false;
+  private serveBounceCount = 0;
   private pointTimer = 0;
   private firstServer: Side = Math.random() < 0.5 ? "p1" : "p2";
   private accumulator = 0;
@@ -178,6 +179,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.exchange = 0;
     this.lastHitter = null;
     this.bouncedReceiver = false;
+    this.serveBounceCount = 0;
     this.state.ballVx = 0; this.state.ballVy = 0; this.state.ballVz = 0;
     this.state.spinTop = 0; this.state.spinSide = 0;
     this.state.p1Charge = 0; this.state.p2Charge = 0;
@@ -204,12 +206,13 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const aimDepth = input?.aimDepth ?? 0.5;
     const targetX = clamp(aimX * TABLE.halfWidth * 0.96 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.98, TABLE.halfWidth * 0.98);
     const targetZ = zDir * (0.08 + aimDepth * 0.88) * TABLE.halfLength;
-    const shot = solveReachableShot({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin, side);
+    const shot = solveLegalServe({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin, side);
     const v = shot.velocity;
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
     this.state.spinTop = shot.topSpin; this.state.spinSide = shot.sideSpin;
     this.lastHitter = side;
     this.bouncedReceiver = false;
+    this.serveBounceCount = 0;
     this.state.phase = "exchange";
     this.broadcast("fx", { type: "hit", side }, { afterNextPatch: true });
   }
@@ -370,16 +373,28 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
         this.state.spinTop *= 0.55;
         this.state.spinSide *= 0.55;
         this.broadcast("fx", { type: "bounce", x: this.state.ballX, z: this.state.ballZ }, { afterNextPatch: true });
-        if (this.lastHitter && side === this.lastHitter) this.point(other(this.lastHitter), "FAULT");
+        if (this.lastHitter && this.state.exchange === 0) {
+          this.serveBounceCount += 1;
+          if (this.serveBounceCount === 1) {
+            if (side !== this.lastHitter) this.point(other(this.lastHitter), "FAULT");
+          } else if (this.serveBounceCount === 2) {
+            if (side === this.lastHitter) this.point(other(this.lastHitter), "FAULT");
+            else this.bouncedReceiver = true;
+          } else {
+            this.point(this.lastHitter, "WINNER");
+          }
+        } else if (this.lastHitter && side === this.lastHitter) this.point(other(this.lastHitter), "FAULT");
         else if (this.bouncedReceiver && this.lastHitter) this.point(this.lastHitter, "WINNER");
         else this.bouncedReceiver = true;
       } else if (this.lastHitter) {
-        this.point(this.bouncedReceiver ? this.lastHitter : other(this.lastHitter), this.bouncedReceiver ? "WINNER" : "OUT");
+        const serveFault = this.state.exchange === 0 && this.serveBounceCount < 2;
+        this.point(serveFault ? other(this.lastHitter) : this.bouncedReceiver ? this.lastHitter : other(this.lastHitter), serveFault ? "FAULT" : this.bouncedReceiver ? "WINNER" : "OUT");
       }
     }
 
     if ((Math.abs(this.state.ballZ) > 8 || Math.abs(this.state.ballX) > 6 || this.state.ballY < -1.6) && this.lastHitter) {
-      this.point(this.bouncedReceiver ? this.lastHitter : other(this.lastHitter), this.bouncedReceiver ? "WINNER" : "OUT");
+      const serveFault = this.state.exchange === 0 && this.serveBounceCount < 2;
+      this.point(serveFault ? other(this.lastHitter) : this.bouncedReceiver ? this.lastHitter : other(this.lastHitter), serveFault ? "FAULT" : this.bouncedReceiver ? "WINNER" : "OUT");
     }
   }
 }
