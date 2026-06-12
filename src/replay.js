@@ -7,6 +7,10 @@ import { useGameStore } from './store.js';
 const replayBaseUrl = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
 const replayHttpBase = String(replayBaseUrl).replace(/^ws/i, 'http').replace(/\/$/, '');
 const clamp = MathUtils.clamp;
+const minReplayPitch = -0.2;
+const maxReplayPitch = 1.15;
+const minReplayDistance = 5.5;
+const maxReplayDistance = 24;
 
 const PHASE_BY_CODE = { [-1]: 'waiting', 0: 'serve', 1: 'exchange', 2: 'point', 3: 'over' };
 
@@ -132,8 +136,25 @@ class ReplayGame {
     this.camX = x; this.camY = y; this.camZ = z;
     this.camLX = lx; this.camLY = ly; this.camLZ = lz;
     this.camFov = 50;
+    const rel = new Vector3(x - lx, y - ly, z - lz);
+    this.cameraTarget = new Vector3(lx, ly, lz);
+    this.cameraYaw = Math.atan2(rel.x, rel.z);
+    this.cameraPitch = Math.asin(clamp(rel.y / Math.max(0.0001, rel.length()), -1, 1));
+    this.cameraDistance = rel.length();
+    this.cameraDrag = null;
     this.playerRef = null;
     this.viewerSide = 'p1';
+  }
+
+  resetCamera() {
+    const [x, y, z] = CAMERA.playPosition;
+    const [lx, ly, lz] = CAMERA.playTarget;
+    const rel = new Vector3(x - lx, y - ly, z - lz);
+    this.cameraTarget.set(lx, ly, lz);
+    this.cameraYaw = Math.atan2(rel.x, rel.z);
+    this.cameraPitch = Math.asin(clamp(rel.y / Math.max(0.0001, rel.length()), -1, 1));
+    this.cameraDistance = rel.length();
+    this.cameraDrag = null;
   }
 
   async load(matchId, token, viewerSide = 'p1') {
@@ -146,6 +167,7 @@ class ReplayGame {
       this.viewerSide = side;
       resetFx();
       resetInputHud();
+      this.resetCamera();
       useGameStore.getState().startReplayMode({
         match,
         stats: player.replay?.stats || null,
@@ -191,14 +213,47 @@ class ReplayGame {
   }
 
   setPointerLocked() {}
-  onPointerMove() {}
-  onPointerDown() {}
-  onPointerUp() {}
+  onPointerMove(event) {
+    if (!this.cameraDrag) return;
+    const dx = event.clientX - this.cameraDrag.x;
+    const dy = event.clientY - this.cameraDrag.y;
+    this.cameraDrag.x = event.clientX;
+    this.cameraDrag.y = event.clientY;
+    if (this.cameraDrag.pan) {
+      const scale = this.cameraDistance * 0.0018;
+      const right = new Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
+      const up = new Vector3(0, 1, 0);
+      this.cameraTarget.addScaledVector(right, -dx * scale);
+      this.cameraTarget.addScaledVector(up, dy * scale);
+      this.cameraTarget.x = clamp(this.cameraTarget.x, -5, 5);
+      this.cameraTarget.y = clamp(this.cameraTarget.y, -2.8, 4);
+      this.cameraTarget.z = clamp(this.cameraTarget.z, -7, 7);
+    } else {
+      this.cameraYaw -= dx * 0.006;
+      this.cameraPitch = clamp(this.cameraPitch + dy * 0.0045, minReplayPitch, maxReplayPitch);
+    }
+    event.preventDefault?.();
+  }
+  onPointerDown(event) {
+    if (event.pointerType === 'mouse' && event.button !== 0 && event.button !== 2) return;
+    this.cameraDrag = { x: event.clientX, y: event.clientY, pan: event.shiftKey || event.button === 2 };
+    event.preventDefault?.();
+  }
+  onPointerUp() {
+    this.cameraDrag = null;
+  }
+  onWheel(event) {
+    if (useGameStore.getState().mode !== 'replay') return;
+    this.cameraDistance = clamp(this.cameraDistance * (1 + event.deltaY * 0.001), minReplayDistance, maxReplayDistance);
+    event.preventDefault?.();
+  }
   onKeyDown(event) {
     if (event.code === 'Space') {
       const store = useGameStore.getState();
       store.setReplayPlaying(!store.replayPlaying);
       event.preventDefault();
+    } else if (event.code === 'KeyR') {
+      this.resetCamera();
     }
   }
   onKeyUp() {}
@@ -271,13 +326,16 @@ class ReplayGame {
     decayFx(dt);
     this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
     this.netRotX = Math.sin(time * 26) * this.netWobble * 0.1;
-    const bob = Math.sin(time * 0.8) * 0.04;
-    this.camX = damp(this.camX, CAMERA.playPosition[0], 2.4, dt);
-    this.camY = damp(this.camY, CAMERA.playPosition[1] + bob, 2.4, dt);
-    this.camZ = damp(this.camZ, CAMERA.playPosition[2], 2.4, dt);
-    this.camLX = damp(this.camLX, CAMERA.playTarget[0], 2.4, dt);
-    this.camLY = damp(this.camLY, CAMERA.playTarget[1], 2.4, dt);
-    this.camLZ = damp(this.camLZ, CAMERA.playTarget[2], 2.4, dt);
+    const cosPitch = Math.cos(this.cameraPitch);
+    const targetX = this.cameraTarget.x + Math.sin(this.cameraYaw) * cosPitch * this.cameraDistance;
+    const targetY = this.cameraTarget.y + Math.sin(this.cameraPitch) * this.cameraDistance;
+    const targetZ = this.cameraTarget.z + Math.cos(this.cameraYaw) * cosPitch * this.cameraDistance;
+    this.camX = damp(this.camX, targetX, 9, dt);
+    this.camY = damp(this.camY, targetY, 9, dt);
+    this.camZ = damp(this.camZ, targetZ, 9, dt);
+    this.camLX = damp(this.camLX, this.cameraTarget.x, 9, dt);
+    this.camLY = damp(this.camLY, this.cameraTarget.y, 9, dt);
+    this.camLZ = damp(this.camLZ, this.cameraTarget.z, 9, dt);
     this.camFov = damp(this.camFov, 50, 2.4, dt);
   }
 }

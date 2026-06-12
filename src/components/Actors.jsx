@@ -647,6 +647,7 @@ export function Actors() {
       }
     };
     const onUp = (event) => currentGame().onPointerUp(event);
+    const onWheel = (event) => currentGame().onWheel?.(event);
     const onKeyDown = (event) => {
       if (event.code === 'Escape') {
         const state = useGameStore.getState();
@@ -675,6 +676,7 @@ export function Actors() {
 
     element.addEventListener('pointermove', onMove);
     element.addEventListener('pointerdown', onDown);
+    element.addEventListener('wheel', onWheel, { passive: false });
     element.addEventListener('contextmenu', preventDefault);
     document.addEventListener('pointerlockchange', onLockChange);
     window.addEventListener('pointerup', onUp);
@@ -689,6 +691,7 @@ export function Actors() {
     return () => {
       element.removeEventListener('pointermove', onMove);
       element.removeEventListener('pointerdown', onDown);
+      element.removeEventListener('wheel', onWheel);
       element.removeEventListener('contextmenu', preventDefault);
       document.removeEventListener('pointerlockchange', onLockChange);
       window.removeEventListener('pointerup', onUp);
