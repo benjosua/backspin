@@ -12,6 +12,7 @@ function clone(value) {
 function botSnapshot() {
   return Object.fromEntries(BOTS.map((bot) => [bot.id, {
     minDepth: bot.minDepth,
+    maxDepth: bot.maxDepth,
     skill: bot.skill,
     paddleSpeed: bot.paddleSpeed,
     react: bot.react,

@@ -27,6 +27,9 @@ const browserNeedsPointerScale = (() => {
 })();
 const pointerScale = () => (browserNeedsPointerScale && window.devicePixelRatio) || 1;
 const winVolleyTimes = [0.12, 0.5, 0.95, 1.55, 2.3];
+const ATTRACT_BOT_ID = 'master';
+const ATTRACT_RESET_DELAY = 1.35;
+
 
 export const inputHud = {
   charge: 0,
@@ -94,6 +97,13 @@ function otherSide(side) {
   return side === 'player' ? 'ai' : 'player';
 }
 
+function clampBotDepth(bot, zDir, targetZ) {
+  const depth = Math.abs(targetZ / TABLE.halfLength);
+  const minDepth = bot.minDepth ?? 0;
+  const maxDepth = bot.maxDepth ?? 1;
+  return zDir * clamp(depth, minDepth, maxDepth) * TABLE.halfLength;
+}
+
 export class GameEngine {
   constructor() {
     this.ball = new Vector3(0, 1, 4.5);
@@ -101,7 +111,7 @@ export class GameEngine {
     this.spin = { top: 0, side: 0 };
     this.ballRotX = 0;
     this.ballRotY = 0;
-    this.player = { who: 'player', x: 0, y: 0.62, z: 5, rotX: -0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: 5 };
+    this.player = { who: 'player', x: 0, y: 0.62, z: 5, rotX: -0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: 5, tell: 0 };
     this.ai = { who: 'ai', x: 0, y: 0.62, z: -5, rotX: 0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: -5, tell: 0 };
     this.firstServer = randomSide();
     this.lastHitter = null;
@@ -115,6 +125,8 @@ export class GameEngine {
     this.paddle = PLAYER_PADDLE;
     this.reach = PHYSICS.serveHeight;
     this.tier = getBot(DEFAULT_DIFFICULTY);
+    this.attractBot = getBot(ATTRACT_BOT_ID);
+    this.attractActive = false;
     this.brain = makeBrain();
     this.reactTimer = 0;
     this.tellSounded = false;
@@ -164,6 +176,52 @@ export class GameEngine {
     this.fx = null;
   }
 
+  isAttractMode(state = useGameStore.getState()) {
+    return state.revealed && !state.started && state.mode === 'offline';
+  }
+
+  resetAttractMatch() {
+    useGameStore.setState({
+      scoreP: 0,
+      scoreAI: 0,
+      phase: 'serve',
+      winner: null,
+      flashText: '',
+      flashId: 0,
+      server: 'player',
+    });
+    this.firstServer = randomSide();
+    this.player.x = 0;
+    this.ai.x = 0;
+    this.player.vx = 0;
+    this.ai.vx = 0;
+    this.player.tell = 0;
+    this.ai.tell = 0;
+    this.paddle = PLAYER_PADDLE;
+    this.reach = PHYSICS.serveHeight * this.paddle.play.reach;
+    this.tier = this.attractBot;
+    resetBrain(this.brain);
+    inputHud.aiConfidence = this.brain.confidence;
+    resetFx();
+    this.overT = 0;
+    this.volley = 0;
+    this.resetServe();
+  }
+
+  syncAttractMode(state = useGameStore.getState()) {
+    const attract = this.isAttractMode(state);
+    if (attract && !this.attractActive) {
+      this.attractActive = true;
+      this.resetAttractMatch();
+    } else if (!attract && this.attractActive) {
+      this.attractActive = false;
+      this.player.tell = 0;
+      this.ai.tell = 0;
+    }
+    return attract;
+  }
+
+
   currentServer() {
     const { scoreP, scoreAI } = useGameStore.getState();
     const total = scoreP + scoreAI;
@@ -198,11 +256,12 @@ export class GameEngine {
     this.charging = false;
     this.chargeStartedAt = 0;
     this.reactTimer = 0;
+    this.player.tell = 0;
     this.ai.tell = 0;
     this.tellSounded = false;
     resetInputHud();
     const server = this.currentServer();
-    this.aiServeTimer = server === 'ai' ? 1.1 : 0;
+    this.aiServeTimer = (this.isAttractMode() || server === 'ai') ? 1.1 : 0;
     const store = useGameStore.getState();
     store.setServer(server);
     store.setPhase('serve');
@@ -226,6 +285,7 @@ export class GameEngine {
     const color = winner === 'player' ? COLORS.player : COLORS.ai;
     this.fx?.burst?.(this.ball.x, this.ball.y, this.ball.z, color, ace ? 18 : 14, ace ? 6 : 5);
     this.fx?.shock?.(this.ball.x, this.ball.y, this.ball.z, color, 2.2);
+    this.fx?.scoreText?.(this.ball.x, this.ball.y, this.ball.z, color, '+1');
     this.shake = ace ? 0.55 : 0.45;
     arenaFx.score = 1;
     raiseFx('pulse', 1);
@@ -253,7 +313,7 @@ export class GameEngine {
 
   serve() {
     const state = useGameStore.getState();
-    if (state.started === false || state.phase !== 'serve') return;
+    if ((!state.started && !this.isAttractMode(state)) || state.phase !== 'serve') return;
     const server = this.currentServer();
     const isPlayer = server === 'player';
     const racket = isPlayer ? this.player : this.ai;
@@ -264,7 +324,8 @@ export class GameEngine {
 
     let topSpin, sideSpin, targetX, targetZ, flightTime;
     const charge = isPlayer ? this.charge : 0;
-    if (isPlayer) {
+    const attract = this.isAttractMode(state);
+    if (isPlayer && !attract) {
       topSpin = clamp((this.pvy * CAMERA.cameraLookAhead + this.kTop) * play.spin, -0.8, 0.8);
       sideSpin = clamp(this.pvx * CAMERA.cameraZBase * play.spin, -0.8, 0.8);
       const aimX = this.aimX;
@@ -273,13 +334,16 @@ export class GameEngine {
       targetZ = zDir * (0.08 + aimDepth * 0.88) * TABLE.halfLength;
       flightTime = ((1 - charge * 0.25) * 0.72) / play.power;
     } else {
-      const bot = this.tier;
-      const skill = effectiveSkill(bot, this.brain, state.scoreAI, state.scoreP);
+      const bot = attract ? this.attractBot : this.tier;
+      const botScore = isPlayer ? state.scoreP : state.scoreAI;
+      const opponentScore = isPlayer ? state.scoreAI : state.scoreP;
+      const opponent = isPlayer ? this.ai : this.player;
+      const skill = effectiveSkill(bot, this.brain, botScore, opponentScore);
       const confidence = this.brain.confidence;
       const serveSpin = bot.serveSpin * (0.72 + skill * 0.28 + (confidence - 0.5) * bot.confSwing);
       topSpin = (rand() < 0.4 + bot.serveSpin * 0.45 ? 1 : -1) * (0.22 + rand() * 0.42) * serveSpin;
       sideSpin = (rand() - 0.5) * 1.55 * serveSpin;
-      const awayFromPlayer = this.player.x >= 0 ? -1 : 1;
+      const awayFromPlayer = opponent.x >= 0 ? -1 : 1;
       const placement = bot.placement * 0.48 + bot.aggression * 0.32;
       targetX = clamp(
         awayFromPlayer * TABLE.halfWidth * (0.44 + placement * 0.4) + sideSpin * TABLE.halfWidth * 0.3 + (rand() - 0.5) * TABLE.halfWidth * Math.max(0.08, 0.28 - skill * 0.14),
@@ -287,7 +351,7 @@ export class GameEngine {
         TABLE.halfWidth * 0.92,
       );
       targetZ = zDir * (0.58 + rand() * (0.2 + skill * 0.22)) * TABLE.halfLength;
-      if (bot.minDepth != null) targetZ = zDir * Math.max(Math.abs(targetZ / TABLE.halfLength), bot.minDepth) * TABLE.halfLength;
+      targetZ = clampBotDepth(bot, zDir, targetZ);
       flightTime = clamp(0.68 - bot.serveSpin * 0.14 - skill * 0.12, 0.46, 0.68);
     }
     this.spin.top = topSpin;
@@ -297,7 +361,7 @@ export class GameEngine {
     this.lastHitter = server;
     this.bouncedReceiver = false;
     this.charge = 0;
-    if (server === 'player') this.reactTimer = this.tier.serveReact ?? this.tier.reactionDelay;
+    if (server === 'player' && !attract) this.reactTimer = this.tier.serveReact ?? this.tier.reactionDelay;
     useGameStore.getState().setPhase('exchange');
     racket.swing = 1;
     playHit(charge, 0);
@@ -316,6 +380,8 @@ export class GameEngine {
     const reach = isPlayer ? this.reach : PHYSICS.serveHeight;
     const offset = clamp((ball.x - racket.x) / reach, -1, 1);
     const highBall = ball.y > PHYSICS.playerHeight;
+    const attract = this.isAttractMode();
+    const botControlled = attract || !isPlayer;
     this.exchange += 1;
     if ([8, 14, 20, 30].includes(this.exchange)) this.setCallout(`STREAK ${this.exchange}`, COLORS.ink);
 
@@ -325,7 +391,7 @@ export class GameEngine {
     let power = 0;
     let playerShot = null;
 
-    if (isPlayer) {
+    if (isPlayer && !attract) {
       const play = this.paddle.play;
       power = this.charge;
       const flickX = Math.abs(this.pvx) > 0.9 ? this.pvx : this.pvx * 0.25;
@@ -366,12 +432,15 @@ export class GameEngine {
       targetZ = playerShot.target.z;
       flightTime = playerShot.flightTime;
     } else {
-      const bot = this.tier;
+      const bot = attract ? this.attractBot : this.tier;
       const { scoreAI, scoreP } = useGameStore.getState();
       const fatigue = fatiguePenalty(this.exchange);
-      const skill = effectiveSkill(bot, this.brain, scoreAI, scoreP, this.exchange);
+      const botScore = isPlayer ? scoreP : scoreAI;
+      const opponentScore = isPlayer ? scoreAI : scoreP;
+      const skill = effectiveSkill(bot, this.brain, botScore, opponentScore, this.exchange);
       const confidence = this.brain.confidence;
-      const playerX = this.player.x;
+      const opponent = isPlayer ? this.ai : this.player;
+      const playerX = opponent.x;
       const incomingSpeed = Math.hypot(this.vel.x, this.vel.z);
       const softBall = !highBall && incomingSpeed < 6.2 && ball.y > 0.42;
       this._aiSmash = (highBall || softBall) && rand() < bot.smashChance * (0.55 + confidence * 0.7) * (1 - fatigue * 0.55);
@@ -389,8 +458,8 @@ export class GameEngine {
         sideSpin = (rand() - 0.5) * 1.7 * bot.spin * (0.7 + confidence * 0.5);
       }
 
-      if (Math.abs(this.player.vx) > 3 && rand() < bot.wrongFoot * confidence) {
-        targetX = clamp(((-Math.sign(this.player.vx) || 1) * TABLE.halfWidth * (0.45 + bot.aggression * 0.4)) + (rand() - 0.5) * TABLE.halfWidth * 0.3, -TABLE.halfWidth * 0.9, TABLE.halfWidth * 0.9);
+      if (Math.abs(opponent.vx) > 3 && rand() < bot.wrongFoot * confidence) {
+        targetX = clamp(((-Math.sign(opponent.vx) || 1) * TABLE.halfWidth * (0.45 + bot.aggression * 0.4)) + (rand() - 0.5) * TABLE.halfWidth * 0.3, -TABLE.halfWidth * 0.9, TABLE.halfWidth * 0.9);
       } else {
         const away = playerX >= 0 ? -1 : 1;
         targetX = clamp(-playerX * (0.3 + bot.placement * 0.4) + away * bot.aggression * TABLE.halfWidth * 0.45 + (rand() - 0.5) * TABLE.halfWidth * (1 - bot.aggression), -TABLE.halfWidth * 0.9, TABLE.halfWidth * 0.9);
@@ -398,14 +467,14 @@ export class GameEngine {
       error = bot.error * (1.25 - confidence * 0.5) + fatigue * 0.08;
     }
 
-    const smash = isPlayer ? playerShot?.smash : this._aiSmash;
-    if (isPlayer && smash) power = Math.max(power, 0.85);
-    if (!isPlayer && smash) {
+    const smash = botControlled ? this._aiSmash : playerShot?.smash;
+    if (isPlayer && !botControlled && smash) power = Math.max(power, 0.85);
+    if (botControlled && smash) {
       topSpin = Math.max(topSpin, 0.2);
       flightTime = PHYSICS.spinDecay;
       targetZ = zDir * (0.72 + rand() * 0.2) * TABLE.halfLength;
       power = Math.max(power, 0.85);
-    } else if (!isPlayer) {
+    } else if (botControlled) {
       if (topSpin > 0) {
         flightTime *= 1 - topSpin * 0.24;
         targetZ = zDir * (0.58 + rand() * 0.32) * TABLE.halfLength;
@@ -415,20 +484,20 @@ export class GameEngine {
       } else {
         targetZ = zDir * (0.5 + rand() * 0.35) * TABLE.halfLength;
       }
-      if (!isPlayer && this._lob) {
+      if (botControlled && this._lob) {
         flightTime = 0.92 + rand() * 0.16;
         targetZ = zDir * (0.5 + rand() * 0.16) * TABLE.halfLength;
       }
     }
 
-    if (!isPlayer && this.tier.minDepth != null) {
-      targetZ = zDir * Math.max(Math.abs(targetZ / TABLE.halfLength), this.tier.minDepth) * TABLE.halfLength;
-      if (topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
+    if (botControlled) {
+      targetZ = clampBotDepth(botControlled && attract ? this.attractBot : this.tier, zDir, targetZ);
+      if ((botControlled && attract ? this.attractBot : this.tier).minDepth != null && topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
     }
 
     this.spin.top = topSpin;
     this.spin.side = sideSpin;
-    const solved = isPlayer
+    const solved = isPlayer && !botControlled
       ? new Vector3(playerShot.velocity.x, playerShot.velocity.y, playerShot.velocity.z)
       : solveShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin);
     if (error > 0) {
@@ -458,7 +527,7 @@ export class GameEngine {
     else if (isPlayer && playerShot?.intent === 'block') this.setCallout('BLOCK', color);
     else if (isPlayer && power > 0.72) this.setCallout('POWER', color);
 
-    if (isPlayer) {
+    if (isPlayer && !attract) {
       this.charge = 0;
       inputHud.power = power;
       inputHud.spinX = sideSpin;
@@ -467,9 +536,33 @@ export class GameEngine {
       inputHud.spinLabel = playerShot?.intent === 'lob' ? 'LOB' : playerShot?.intent === 'block' ? 'BLOCK' : Math.abs(sideSpin) > 0.35 ? 'SIDESPIN' : topSpin > 0.3 ? 'TOPSPIN' : topSpin < -0.2 ? 'CHOP' : '';
       this.reactTimer = this.tier.reactionDelay;
     } else {
-      this.ai.tell = 0;
+      racket.tell = 0;
       this.tellSounded = false;
     }
+  }
+
+  updateBotPaddle(who, dt, phase, bot) {
+    const racket = who === 'player' ? this.player : this.ai;
+    const ball = this.ball;
+    const incoming = phase === 'exchange' && this.lastHitter === otherSide(who);
+    const fatigue = fatiguePenalty(this.exchange);
+    const maxSpeed = bot.paddleSpeed * (1 - fatigue * 0.32);
+    const react = bot.react * (1 - fatigue * 0.22);
+    const racketZ = who === 'player' ? PHYSICS.gravity : -PHYSICS.gravity;
+    const movingToward = who === 'player' ? this.vel.z > 0.1 : this.vel.z < -0.1;
+    let target = 0;
+
+    if (incoming && movingToward) {
+      const time = clamp((racketZ - ball.z) / (this.vel.z || 0.000001), 0, 1.2);
+      const predicted = ball.x + this.vel.x * time + this.spin.side * 0.5 * PHYSICS.magnus * time * time;
+      target = clamp(MathUtils.lerp(ball.x, predicted, bot.predict), -TABLE.halfWidth - 0.4, TABLE.halfWidth + 0.4);
+    } else if (incoming) {
+      target = racket.x * 0.7;
+    }
+
+    const desiredVx = clamp((target - racket.x) * 7, -maxSpeed, maxSpeed);
+    racket.vx = damp(racket.vx, desiredVx, react, dt);
+    racket.x = clamp(racket.x + racket.vx * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
   }
 
   updateAI(dt, phase) {
@@ -588,6 +681,7 @@ export class GameEngine {
   }
 
   onPointerDown(event) {
+    if (this.isAttractMode()) return;
     if (event.pointerType !== 'mouse' || event.button === 0) {
       initAudio();
       if (event.pointerType !== 'mouse') {
@@ -601,6 +695,7 @@ export class GameEngine {
     }
   }
   onPointerUp(event) {
+    if (this.isAttractMode()) return;
     if (event) {
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       if (event.pointerType !== 'mouse') {
@@ -613,6 +708,7 @@ export class GameEngine {
     this.charging = false;
   }
   onKeyDown(event) {
+    if (this.isAttractMode()) return;
     if (event.code === 'ArrowLeft' || event.code === 'KeyA') { this.keys.l = true; this.usingKeys = true; }
     if (event.code === 'ArrowRight' || event.code === 'KeyD') { this.keys.r = true; this.usingKeys = true; }
     if (event.code === 'ArrowUp' || event.code === 'KeyW') this.kTop = 0.85;
@@ -625,6 +721,7 @@ export class GameEngine {
     }
   }
   onKeyUp(event) {
+    if (this.isAttractMode()) return;
     if (event.code === 'ArrowLeft' || event.code === 'KeyA') this.keys.l = false;
     if (event.code === 'ArrowRight' || event.code === 'KeyD') this.keys.r = false;
     if (event.code === 'Space' || event.code === 'Enter') {
@@ -637,7 +734,9 @@ export class GameEngine {
   update(dt, time, camera, effects) {
     this.fx = effects;
     dt = clampDt(dt);
-    const state = useGameStore.getState();
+    let state = useGameStore.getState();
+    const attract = this.syncAttractMode(state);
+    if (attract) state = useGameStore.getState();
     if (debugFlags.forceOver) {
       const forced = debugFlags.forceOver;
       const winner = typeof forced === 'object' ? forced.winner : forced;
@@ -649,11 +748,11 @@ export class GameEngine {
       }
       debugFlags.forceOver = null;
     }
-    if (!state.started) {
+    if (!state.started && !attract) {
       this.idle(dt, time, camera);
       return;
     }
-    if (state.menuOpen && state.phase !== 'over') {
+    if (!attract && state.menuOpen && state.phase !== 'over') {
       this.pauseFrame(dt);
       return;
     }
@@ -680,21 +779,26 @@ export class GameEngine {
     this.kTop = damp(this.kTop, 0, 6, dt);
 
     player.prevX = player.x;
-    const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
-    if (dir) this.inputX = clamp(this.inputX + dir * 19 * state.playerSpeed * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    if (attract) {
+      this.updateBotPaddle('player', dt, phase, this.attractBot);
+      this.updateBotPaddle('ai', dt, phase, this.attractBot);
+    } else {
+      const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
+      if (dir) this.inputX = clamp(this.inputX + dir * 19 * state.playerSpeed * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
 
-    if (camera) {
-      this.ndc.set(this.ndcX, this.ndcY);
-      this.ray.setFromCamera(this.ndc, camera);
-      if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
-        this.aimX = clamp(this.hit.x / (TABLE.halfWidth + 0.5), -1, 1);
+      if (camera) {
+        this.ndc.set(this.ndcX, this.ndcY);
+        this.ray.setFromCamera(this.ndc, camera);
+        if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
+          this.aimX = clamp(this.hit.x / (TABLE.halfWidth + 0.5), -1, 1);
+        }
       }
-    }
-    this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
+      this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
 
-    player.x = damp(player.x, this.inputX, this.paddle.play.follow * 32 * state.playerSpeed, dt);
-    player.vx = (player.x - player.prevX) / Math.max(dt, 0.000001);
-    this.updateAI(dt, phase);
+      player.x = damp(player.x, this.inputX, this.paddle.play.follow * 32 * state.playerSpeed, dt);
+      player.vx = (player.x - player.prevX) / Math.max(dt, 0.000001);
+      this.updateAI(dt, phase);
+    }
 
     const aiCanSmashTell = phase === 'exchange' && this.lastHitter === 'player' && this.bouncedReceiver && this.tier.smashChance > 0.25 && ball.z < -2.4 && this.vel.z < 0 && ball.y > 0.68;
     ai.tell = damp(ai.tell, Number(!!aiCanSmashTell), aiCanSmashTell ? 10 : 8, dt);
@@ -704,7 +808,7 @@ export class GameEngine {
     }
     if (!aiCanSmashTell) this.tellSounded = false;
 
-    const canCharge = phase === 'exchange' || (phase === 'serve' && server === 'player');
+    const canCharge = !attract && (phase === 'exchange' || (phase === 'serve' && server === 'player'));
     if (this.charging && canCharge) {
       const old = this.charge;
       this.charge = Math.min(1, this.charge + dt / PHYSICS.hitReach);
@@ -745,7 +849,7 @@ export class GameEngine {
       ball.x = damp(ball.x, racket.x, 12, dt);
       ball.z = racket.baseZ + zDir * 0.5;
       ball.y = racket.y + PHYSICS.paddleThickness + Math.sin(time * 4) * 0.05;
-      if (server === 'ai') {
+      if (server === 'ai' || attract) {
         if (this.swoop >= 1) this.aiServeTimer -= dt;
         if (this.aiServeTimer <= 0) this.serve();
       }
@@ -788,7 +892,7 @@ export class GameEngine {
     this.shadow.z = ball.z;
     this.shadow.op = tableish ? clamp(0.45 - ball.y * 0.09, 0.1, 0.45) : 0;
     this.shadow.scale = 0.5 + ball.y * 0.16;
-    const aiming = phase === 'exchange' || (phase === 'serve' && server === 'player');
+    const aiming = !attract && (phase === 'exchange' || (phase === 'serve' && server === 'player'));
     this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
     this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
     this.aim.op = aiming ? clamp(0.12 + this.charge * 0.6, 0, 0.78) : 0;
@@ -841,6 +945,11 @@ export class GameEngine {
       const eased = t * t * (3 - t * 2);
       if (playerWon) { overY = eased * 0.55; overZ = eased * -1.1; }
       else { overY = eased * -0.38; overZ = eased * 0.85; lookYOffset = eased * -0.3; }
+    }
+
+    if (attract && phase === 'over' && this.overT >= ATTRACT_RESET_DELAY) {
+      this.resetAttractMatch();
+      return;
     }
 
     this.shake = Math.max(0, this.shake - dt * 1.8);

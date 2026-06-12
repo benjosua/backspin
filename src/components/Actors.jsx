@@ -1,7 +1,7 @@
 // Recovered actor cluster from production bundle name `rk` and helpers:
 // xO/SO glow textures, TO/MO paddles, FO ball trail, VO net, YO effects.
 
-import { Trail, RoundedBox } from '@react-three/drei';
+import { Trail, RoundedBox, Text } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
@@ -24,6 +24,7 @@ import { networkGame } from '../network.js';
 import { DEBUG_MODE, useGameStore } from '../store.js';
 import { paddleFragmentShader, paddleVertexShader } from '../shaders.js';
 import { createPaddleHeadShape, paddleHeadExtrude } from '../paddleShape.js';
+import { MONTSERRAT_FONT_URL } from '../fonts.js';
 
 function makeGlowTexture(rgb, strong = false) {
   const canvas = document.createElement('canvas');
@@ -266,6 +267,7 @@ const Net = forwardRef(function Net(_props, ref) {
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 const ballGhostCount = Math.max(3, Math.round(2 + perfSettings.fxScale * 4));
+const scoreTextCount = 4;
 const sparkleCount = perfSettings.sparkleCount;
 const ringCount = perfSettings.ringCount;
 const shockCount = perfSettings.shockCount;
@@ -274,12 +276,14 @@ const confettiCount = perfSettings.confettiCount;
 const confettiColors = ['#d9665f', '#fff3dc', '#de7a6d', '#c85f59', '#ef8f87', '#a8b598'];
 
 const Effects = forwardRef(function Effects({ enabled }, ref) {
+  const { camera } = useThree();
   const sparkleTexture = useMemo(() => makeGlowTexture('255,238,210'), []);
   const ringTexture = useMemo(() => makeRingTexture('255,236,196'), []);
   const sparkles = useRef([]);
   const rings = useRef([]);
   const shocks = useRef([]);
   const impacts = useRef([]);
+  const scoreTexts = useRef([]);
   const confetti = useRef(null);
   const temp = useMemo(() => new Object3D(), []);
   const confettiPalette = useMemo(() => confettiColors.map((color) => new Color(color)), []);
@@ -287,6 +291,7 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
   const ringState = useMemo(() => Array.from({ length: ringCount }, () => ({ life: 0 })), []);
   const shockState = useMemo(() => Array.from({ length: shockCount }, () => ({ life: 0, max: 1, to: 1 })), []);
   const impactState = useMemo(() => Array.from({ length: impactCount }, () => ({ life: 0, max: 1, to: 1 })), []);
+  const scoreTextState = useMemo(() => Array.from({ length: scoreTextCount }, () => ({ life: 0, max: 1, x: 0, y: 0, z: 0, vx: 0 })), []);
   const confettiState = useMemo(() => Array.from({ length: confettiCount }, () => ({
     life: 0, max: 1, dead: true, landed: false,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0, w: 0, swf: 3, sc: 1,
@@ -365,6 +370,30 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
         return;
       }
     },
+    scoreText(x, y, z, color, label = '+1') {
+      if (!enabled) return;
+      for (let i = 0; i < scoreTextCount; i += 1) {
+        const state = scoreTextState[i];
+        if (state.life > 0) continue;
+        state.life = state.max = 0.9;
+        state.x = x;
+        state.y = y + 0.55;
+        state.z = z;
+        state.vx = randomBetween(-0.35, 0.35);
+        const node = scoreTexts.current[i];
+        if (node) {
+          node.text = label;
+          node.color = color;
+          node.outlineColor = '#fff3dc';
+          node.fillOpacity = 1;
+          node.outlineOpacity = 0.75;
+          node.visible = true;
+          node.position.set(state.x, state.y, state.z);
+          node.scale.setScalar(0.65);
+        }
+        return;
+      }
+    },
     confetti(x, y, z, count = 48, speed = 2.8) {
       if (!enabled) return;
       const mesh = confetti.current;
@@ -397,7 +426,7 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     },
-  }), [confettiPalette, confettiState, enabled, impactState, ringState, shockState, sparkleState]);
+  }), [confettiPalette, confettiState, enabled, impactState, ringState, scoreTextState, shockState, sparkleState]);
 
   useFrame((_, delta) => {
     if (!enabled) return;
@@ -446,6 +475,20 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
       const scale = 0.4 + t * state.to;
       sprite.scale.set(scale, scale, 1);
       sprite.material.opacity = (1 - t * t) * 0.95;
+    }
+    for (let i = 0; i < scoreTextCount; i += 1) {
+      const state = scoreTextState[i];
+      const node = scoreTexts.current[i];
+      if (!node) continue;
+      if (state.life <= 0) { if (node.visible) node.visible = false; continue; }
+      state.life -= dt;
+      const t = 1 - state.life / state.max;
+      node.position.set(state.x + state.vx * t, state.y + t * 1.05, state.z);
+      node.quaternion.copy(camera.quaternion);
+      node.scale.setScalar(0.55 + Math.sin(Math.min(1, t) * Math.PI) * 0.22);
+      const opacity = Math.max(0, 1 - t * t);
+      node.fillOpacity = opacity;
+      node.outlineOpacity = opacity * 0.75;
     }
 
     const mesh = confetti.current;
@@ -524,6 +567,29 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
         <sprite key={`i${index}`} ref={(node) => { impacts.current[index] = node; }} scale={[0.4, 0.4, 1]}>
           <spriteMaterial map={sparkleTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
         </sprite>
+      ))}
+      {scoreTextState.map((_, index) => (
+        <Text
+          key={`score-text-${index}`}
+          ref={(node) => { scoreTexts.current[index] = node; }}
+          font={MONTSERRAT_FONT_URL}
+          fontSize={0.7}
+          fontWeight={900}
+          anchorX="center"
+          anchorY="middle"
+          color={COLORS.player}
+          outlineColor="#fff3dc"
+          outlineWidth="4%"
+          outlineBlur="2%"
+          fillOpacity={0}
+          outlineOpacity={0}
+          renderOrder={8}
+          depthOffset={-8}
+          visible={false}
+        >
+          +1
+          <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+        </Text>
       ))}
       <instancedMesh ref={confetti} args={[undefined, undefined, confettiCount]} frustumCulled={false}>
         <planeGeometry args={[0.085, 0.13]} />
@@ -721,11 +787,14 @@ export function Actors() {
   }, [resetNonce, mode]);
 
   useFrame((state, delta) => {
-    const activeGame = useGameStore.getState().mode === 'online' ? networkGame : game;
+    const store = useGameStore.getState();
+    const activeGame = store.mode === 'online' ? networkGame : game;
     activeGame.update(delta, getDebugTime(state.clock.elapsedTime), camera, effects.current);
 
     const now = getDebugTime(state.clock.elapsedTime);
-    const active = DEBUG_MODE || useGameStore.getState().started;
+    const nextStore = useGameStore.getState();
+    const attract = nextStore.revealed && !nextStore.started && nextStore.mode === 'offline';
+    const active = DEBUG_MODE || nextStore.started || attract;
     const fade = visibleAmount.current = damp(visibleAmount.current, Number(active), active ? 7 : 12, clampDt(delta));
     if (visibleGroup.current) visibleGroup.current.visible = fade > 0.01;
     const scale = Math.max(0.001, fade);

@@ -132,7 +132,7 @@ export const TUNING = {
 };
 
 export const BOTS = [
-  { id: 'rookie', name: 'ROOKIE', tag: 'Still learning the table', minDepth: 0.58, skill: 0.28, paddleSpeed: 7.6, react: 4.6, reactionDelay: 0.21, serveReact: 0.11, servePredict: 0.36, predict: 0.17, error: 0.17, spin: 0.2, aggression: 0.14, placement: 0.22, smashChance: 0, wrongFoot: 0, catchup: 0.95, confSwing: 0.12, serveSpin: 0.22 },
+  { id: 'rookie', name: 'ROOKIE', tag: 'Still learning the table', minDepth: 0.58, maxDepth: 0.78, skill: 0.28, paddleSpeed: 7.6, react: 4.6, reactionDelay: 0.21, serveReact: 0.11, servePredict: 0.36, predict: 0.17, error: 0.17, spin: 0.2, aggression: 0.14, placement: 0.22, smashChance: 0, wrongFoot: 0, catchup: 0.95, confSwing: 0.12, serveSpin: 0.22 },
   { id: 'pro', name: 'PRO', tag: 'Brings real heat', skill: 0.68, paddleSpeed: 12.4, react: 7.8, reactionDelay: 0.07, predict: 0.74, error: 0.055, spin: 0.68, aggression: 0.55, placement: 0.62, smashChance: 0.48, wrongFoot: 0.22, catchup: 0.42, confSwing: 0.2, serveSpin: 0.78 },
   { id: 'master', name: 'MASTER', tag: 'Do not blink', skill: 0.9, paddleSpeed: 15.5, react: 9.5, reactionDelay: 0, predict: 0.95, error: 0.025, spin: 0.95, aggression: 0.82, placement: 0.85, smashChance: 0.8, wrongFoot: 0.42, catchup: 0.08, confSwing: 0.26, serveSpin: 1 },
 ];
