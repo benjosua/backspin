@@ -363,6 +363,7 @@ export function WallScoreboard() {
   const winner = useGameStore((state) => state.winner);
   const difficulty = useGameStore((state) => state.difficulty);
   const mode = useGameStore((state) => state.mode);
+  const networkStatus = useGameStore((state) => state.networkStatus);
   const roomCode = useGameStore((state) => state.roomCode);
   const playerName = useGameStore((state) => state.playerName);
   const onlineOpponentName = useGameStore((state) => state.opponentName);
@@ -448,7 +449,7 @@ export function WallScoreboard() {
       cpuScore.current.scale.setScalar(breathe * (1 + cpuPop * config.popScale));
     }
     if (roomCodeText.current) {
-      const showRoomCode = mode === 'online' && !!roomCode;
+      const showRoomCode = mode === 'online' && networkStatus === 'waiting' && !!roomCode;
       roomCodeText.current.position.set(0, roomCodeY, roomCodeZ);
       roomCodeText.current.scale.setScalar(breathe);
       if (roomCodeText.current.visible !== showRoomCode) roomCodeText.current.visible = showRoomCode;
@@ -474,7 +475,7 @@ export function WallScoreboard() {
         {String(scoreAI).padStart(2, '0')}
         <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
       </Text>
-      <Text ref={roomCodeText} font={MONTSERRAT_FONT_URL} renderOrder={6} anchorX="center" anchorY="middle" characters={roomCodeChars} depthOffset={-6} visible={mode === 'online' && !!roomCode}>
+      <Text ref={roomCodeText} font={MONTSERRAT_FONT_URL} renderOrder={6} anchorX="center" anchorY="middle" characters={roomCodeChars} depthOffset={-6} visible={mode === 'online' && networkStatus === 'waiting' && !!roomCode}>
         {`ROOM ${roomCode}`}
         <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
       </Text>

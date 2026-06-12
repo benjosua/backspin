@@ -129,7 +129,7 @@ export const TUNING = {
     roomCodeFontWeight: 850,
     roomCodeLetterSpacing: 0.12,
     roomCodeSdfSize: 256,
-    roomCodePad: 0.23,
+    roomCodePad: 0.68,
     dividerColor: '#fff9f0',
     dividerOpacity: 0.52,
     serveDotColor: '#d9665f',
