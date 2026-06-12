@@ -283,7 +283,6 @@ export class GameEngine {
     const ace = reason === 'WINNER' && this.exchange === 0;
     const label = ace ? 'ACE' : reason;
     const color = winner === 'player' ? COLORS.player : COLORS.ai;
-    this.fx?.burst?.(this.ball.x, this.ball.y, this.ball.z, color, ace ? 18 : 14, ace ? 6 : 5);
     this.fx?.shock?.(this.ball.x, this.ball.y, this.ball.z, color, 2.2);
     this.fx?.scoreText?.(this.ball.x, this.ball.y, this.ball.z, color, '+1');
     this.shake = ace ? 0.55 : 0.45;
@@ -525,7 +524,6 @@ export class GameEngine {
     racket.flash = 1;
     racket.swing = 1;
     const color = isPlayer ? COLORS.player : COLORS.ai;
-    this.fx?.burst?.(ball.x, ball.y, ball.z, color, smash ? 18 : 6 + Math.round(power * 6), smash ? 6.5 : 3.5 + power * 2.5);
     this.fx?.impact?.(ball.x, ball.y, ball.z, color, smash ? 1 : 0.4 + power * 0.6);
     if (smash || power > 0.6) this.fx?.shock?.(ball.x, ball.y, ball.z, color, smash ? 2.8 : 1.6);
     this.shake = (smash ? 0.55 : 0.18) + power * 0.28;

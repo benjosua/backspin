@@ -267,7 +267,6 @@ const Net = forwardRef(function Net(_props, ref) {
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 const scoreTextCount = 4;
-const sparkleCount = perfSettings.sparkleCount;
 const ringCount = perfSettings.ringCount;
 const shockCount = perfSettings.shockCount;
 const impactCount = perfSettings.impactCount;
@@ -276,9 +275,8 @@ const confettiColors = ['#d9665f', '#fff3dc', '#de7a6d', '#c85f59', '#ef8f87', '
 
 const Effects = forwardRef(function Effects({ enabled }, ref) {
   const { camera } = useThree();
-  const sparkleTexture = useMemo(() => makeGlowTexture('255,238,210'), []);
+  const glowTexture = useMemo(() => makeGlowTexture('255,238,210'), []);
   const ringTexture = useMemo(() => makeRingTexture('255,236,196'), []);
-  const sparkles = useRef([]);
   const rings = useRef([]);
   const shocks = useRef([]);
   const impacts = useRef([]);
@@ -286,7 +284,6 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
   const confetti = useRef(null);
   const temp = useMemo(() => new Object3D(), []);
   const confettiPalette = useMemo(() => confettiColors.map((color) => new Color(color)), []);
-  const sparkleState = useMemo(() => Array.from({ length: sparkleCount }, () => ({ life: 0, max: 1, vx: 0, vy: 0, vz: 0 })), []);
   const ringState = useMemo(() => Array.from({ length: ringCount }, () => ({ life: 0 })), []);
   const shockState = useMemo(() => Array.from({ length: shockCount }, () => ({ life: 0, max: 1, to: 1 })), []);
   const impactState = useMemo(() => Array.from({ length: impactCount }, () => ({ life: 0, max: 1, to: 1 })), []);
@@ -308,26 +305,6 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
   }, [temp]);
 
   useImperativeHandle(ref, () => ({
-    burst(x, y, z, color, count = 7, speed = 3.4) {
-      if (!enabled) return;
-      count = Math.max(1, Math.round(count * perfSettings.fxScale));
-      let emitted = 0;
-      for (let i = 0; i < sparkleCount && emitted < count; i += 1) {
-        const state = sparkleState[i];
-        const sprite = sparkles.current[i];
-        if (state.life > 0 || !sprite) continue;
-        state.life = state.max = randomBetween(0.3, 0.55);
-        state.vx = randomBetween(-speed, speed);
-        state.vy = randomBetween(0.3, speed * 1.1);
-        state.vz = randomBetween(-speed, speed);
-        sprite.position.set(x, y, z);
-        sprite.material.color.set(color);
-        sprite.material.opacity = 1;
-        const size = randomBetween(0.28, 0.6);
-        sprite.scale.set(size, size, 1);
-        emitted += 1;
-      }
-    },
     ring(x, z) {
       if (!enabled) return;
       for (let i = 0; i < ringCount; i += 1) {
@@ -425,23 +402,11 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     },
-  }), [confettiPalette, confettiState, enabled, impactState, ringState, scoreTextState, shockState, sparkleState]);
+  }), [confettiPalette, confettiState, enabled, impactState, ringState, scoreTextState, shockState]);
 
   useFrame((_, delta) => {
     if (!enabled) return;
     const dt = clampDt(delta);
-    for (let i = 0; i < sparkleCount; i += 1) {
-      const state = sparkleState[i];
-      const sprite = sparkles.current[i];
-      if (!sprite) continue;
-      if (state.life <= 0) { if (sprite.material.opacity !== 0) sprite.material.opacity = 0; continue; }
-      state.life -= dt;
-      state.vy -= dt * 9;
-      sprite.position.x += state.vx * dt;
-      sprite.position.y += state.vy * dt;
-      sprite.position.z += state.vz * dt;
-      sprite.material.opacity = Math.max(0, (state.life / state.max) * 0.95);
-    }
     for (let i = 0; i < ringCount; i += 1) {
       const state = ringState[i];
       const mesh = rings.current[i];
@@ -546,11 +511,6 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
 
   return (
     <group>
-      {sparkleState.map((_, index) => (
-        <sprite key={`s${index}`} ref={(node) => { sparkles.current[index] = node; }} scale={[0.4, 0.4, 1]}>
-          <spriteMaterial map={sparkleTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
-        </sprite>
-      ))}
       {ringState.map((_, index) => (
         <mesh key={`r${index}`} ref={(node) => { rings.current[index] = node; }} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
           <ringGeometry args={[0.32, 0.45, 44]} />
@@ -564,7 +524,7 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
       ))}
       {impactState.map((_, index) => (
         <sprite key={`i${index}`} ref={(node) => { impacts.current[index] = node; }} scale={[0.4, 0.4, 1]}>
-          <spriteMaterial map={sparkleTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+          <spriteMaterial map={glowTexture} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
         </sprite>
       ))}
       {scoreTextState.map((_, index) => (
