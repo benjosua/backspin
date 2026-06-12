@@ -122,6 +122,27 @@ export type MatchListItem = Pick<MatchDetails, "match" | "stats"> & {
   replayReady: boolean;
 };
 
+export type UserStats = {
+  matches: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  pointsWon: number;
+  pointsLost: number;
+  pointWinRate: number;
+  shots: number;
+  smashes: number;
+  fastestShotSpeed: number;
+  avgShotSpeed: number;
+  aces: number;
+  winners: number;
+  faultsCommitted: number;
+  faultsDrawn: number;
+  longestRally: number;
+  avgRally: number;
+  recentMatches: MatchListItem[];
+};
+
 export type MatchReplay = MatchDetails & {
   chunks: ReplayChunkInput[];
 };
@@ -143,6 +164,7 @@ export interface MatchStore {
   getReplay(matchId: string): Promise<MatchReplay | null>;
   getShotReplay(matchId: string, shotId: string): Promise<ShotReplay | null>;
   listMatchesForUser(userId: string, limit: number, offset: number): Promise<MatchListItem[]>;
+  getUserStats(userId: string): Promise<UserStats>;
   resetForTests?(): Promise<void>;
 }
 
@@ -221,6 +243,78 @@ function stats(points: MatchPoint[], shots: MatchShot[]) {
     smashes: shots.filter((shot) => shot.smash).length,
     longestRally: points.reduce((max, point) => Math.max(max, point.rallyLength), 0),
   };
+}
+
+function emptyUserStats(): UserStats {
+  return {
+    matches: 0,
+    wins: 0,
+    losses: 0,
+    winRate: 0,
+    pointsWon: 0,
+    pointsLost: 0,
+    pointWinRate: 0,
+    shots: 0,
+    smashes: 0,
+    fastestShotSpeed: 0,
+    avgShotSpeed: 0,
+    aces: 0,
+    winners: 0,
+    faultsCommitted: 0,
+    faultsDrawn: 0,
+    longestRally: 0,
+    avgRally: 0,
+    recentMatches: [],
+  };
+}
+
+function roundRate(value: number) {
+  return Number((Number.isFinite(value) ? value : 0).toFixed(3));
+}
+
+type UserStatsItem = MatchListItem & Pick<MatchDetails, "points" | "shots">;
+
+function buildUserStats(items: UserStatsItem[]): UserStats {
+  const out = emptyUserStats();
+  let shotSpeedTotal = 0;
+  let rallyTotal = 0;
+  let rallyCount = 0;
+  for (const item of items) {
+    const side = item.viewerSide;
+    out.matches += 1;
+    if (item.match.winner === side) out.wins += 1;
+    else out.losses += 1;
+
+    for (const point of item.points || []) {
+      const won = point.winner === side;
+      if (won) out.pointsWon += 1;
+      else out.pointsLost += 1;
+      if (won && point.reason === "WINNER") out.winners += 1;
+      if (won && point.reason === "WINNER" && point.rallyLength === 0) out.aces += 1;
+      if (point.reason === "FAULT") {
+        if (won) out.faultsDrawn += 1;
+        else out.faultsCommitted += 1;
+      }
+      out.longestRally = Math.max(out.longestRally, point.rallyLength);
+      rallyTotal += point.rallyLength;
+      rallyCount += 1;
+    }
+
+    for (const shot of item.shots || []) {
+      if (shot.hitter !== side) continue;
+      out.shots += 1;
+      if (shot.smash) out.smashes += 1;
+      out.fastestShotSpeed = Math.max(out.fastestShotSpeed, shot.speed);
+      shotSpeedTotal += shot.speed;
+    }
+  }
+  out.winRate = roundRate(out.matches ? out.wins / out.matches : 0);
+  out.pointWinRate = roundRate((out.pointsWon + out.pointsLost) ? out.pointsWon / (out.pointsWon + out.pointsLost) : 0);
+  out.avgShotSpeed = roundRate(out.shots ? shotSpeedTotal / out.shots : 0);
+  out.fastestShotSpeed = roundRate(out.fastestShotSpeed);
+  out.avgRally = roundRate(rallyCount ? rallyTotal / rallyCount : 0);
+  out.recentMatches = items.slice(0, 10).map(({ match, stats, viewerSide, replayReady }) => ({ match, stats, viewerSide, replayReady }));
+  return out;
 }
 
 class PostgresMatchStore implements MatchStore {
@@ -431,6 +525,29 @@ class PostgresMatchStore implements MatchStore {
       };
     })).then((items) => items.filter(Boolean) as MatchListItem[]);
   }
+
+  async getUserStats(userId: string) {
+    await this.init();
+    const result = await this.pool.query(
+      `SELECT m.*, EXISTS (
+         SELECT 1 FROM match_replay_chunks c WHERE c.match_id = m.id LIMIT 1
+       ) AS replay_ready
+       FROM matches m
+       WHERE m.ended_at IS NOT NULL AND (m.p1_user_id = $1 OR m.p2_user_id = $1)
+       ORDER BY m.ended_at DESC, m.started_at DESC`,
+      [userId],
+    );
+    const items = await Promise.all(result.rows.map(async (row) => {
+      const details = await this.getMatchDetails(row.id);
+      if (!details) return null;
+      return {
+        ...details,
+        viewerSide: details.match.p1UserId === userId ? "p1" as Side : "p2" as Side,
+        replayReady: Boolean(row.replay_ready),
+      };
+    }));
+    return buildUserStats(items.filter(Boolean) as UserStatsItem[]);
+  }
 }
 
 class MemoryMatchStore implements MatchStore {
@@ -555,6 +672,25 @@ class MemoryMatchStore implements MatchStore {
           replayReady: Boolean((this.chunks.get(match.id) || []).length),
         };
       });
+  }
+
+  async getUserStats(userId: string) {
+    const items = [...this.matches.values()]
+      .filter((match) => match.endedAt && (match.p1UserId === userId || match.p2UserId === userId))
+      .sort((a, b) => String(b.endedAt || b.startedAt).localeCompare(String(a.endedAt || a.startedAt)))
+      .map((match) => {
+        const points = [...(this.points.get(match.id) || [])];
+        const shots = [...(this.shots.get(match.id) || [])];
+        return {
+          match,
+          stats: stats(points, shots),
+          points,
+          shots,
+          viewerSide: match.p1UserId === userId ? "p1" as Side : "p2" as Side,
+          replayReady: Boolean((this.chunks.get(match.id) || []).length),
+        };
+      });
+    return buildUserStats(items);
   }
 }
 

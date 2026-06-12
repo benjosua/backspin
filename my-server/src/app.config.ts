@@ -109,6 +109,14 @@ const server = defineServer({
             }
         });
 
+        app.get("/api/me/stats", auth.middleware(), async (req: any, res: any) => {
+            try {
+                res.json({ stats: await matchStore.getUserStats(req.auth.id) });
+            } catch (error: any) {
+                res.status(400).json({ error: error?.message || "stats_lookup_failed" });
+            }
+        });
+
         app.get("/api/leaderboard", async (req, res) => {
             const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 50));
             res.json({ leaderboard: await rankedStore.leaderboard(limit) });

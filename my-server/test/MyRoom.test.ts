@@ -740,6 +740,77 @@ describe("backspin room", () => {
     await p2.leave();
   });
 
+  it("aggregates signed-in user stats from replay capture data", async () => {
+    const alpha = await register(colyseus, "stats-alpha@example.com", "ALPHA");
+    const beta = await register(colyseus, "stats-beta@example.com", "BETA");
+
+    const matchAsP1 = await matchStore.createMatch({
+      roomId: "stats-room-1",
+      matchSeq: 1,
+      mode: "ranked",
+      ranked: true,
+      p1UserId: alpha.user.id,
+      p2UserId: beta.user.id,
+      p1Name: "ALPHA",
+      p2Name: "BETA",
+      startedAt: new Date("2026-01-01T00:00:00Z"),
+    });
+    await matchStore.addPoint({ id: `${matchAsP1.id}:point:1`, matchId: matchAsP1.id, seq: 1, timeMs: 100, winner: "p1", reason: "WINNER", server: "p1", p1Score: 1, p2Score: 0, rallyLength: 0, terminalBall: {} });
+    await matchStore.addPoint({ id: `${matchAsP1.id}:point:2`, matchId: matchAsP1.id, seq: 2, timeMs: 200, winner: "p2", reason: "FAULT", server: "p2", p1Score: 1, p2Score: 1, rallyLength: 1, terminalBall: {} });
+    await matchStore.addShot({ id: `${matchAsP1.id}:shot:1`, matchId: matchAsP1.id, seq: 1, timeMs: 90, pointSeq: 1, exchange: 0, hitter: "p1", isServe: true, contact: {}, outgoing: {}, charge: 0.5, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 10, intent: "serve", smash: true });
+    await matchStore.addShot({ id: `${matchAsP1.id}:shot:2`, matchId: matchAsP1.id, seq: 2, timeMs: 150, pointSeq: 1, exchange: 1, hitter: "p2", isServe: false, contact: {}, outgoing: {}, charge: 0, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 99, intent: "drive", smash: true });
+    await matchStore.addShot({ id: `${matchAsP1.id}:shot:3`, matchId: matchAsP1.id, seq: 3, timeMs: 190, pointSeq: 2, exchange: 1, hitter: "p1", isServe: false, contact: {}, outgoing: {}, charge: 0, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 20, intent: "drive", smash: false });
+    await matchStore.addReplayChunk({ matchId: matchAsP1.id, chunkIndex: 0, startMs: 0, endMs: 200, frames: [[0, 0, 0, 0]] });
+    await matchStore.finishMatch({ matchId: matchAsP1.id, endedAt: new Date("2026-01-01T00:01:00Z"), endedReason: "completed", winner: "p1", p1Score: 11, p2Score: 8, durationMs: 60000, totalPoints: 2, totalShots: 3 });
+
+    const matchAsP2 = await matchStore.createMatch({
+      roomId: "stats-room-2",
+      matchSeq: 1,
+      mode: "ranked",
+      ranked: true,
+      p1UserId: beta.user.id,
+      p2UserId: alpha.user.id,
+      p1Name: "BETA",
+      p2Name: "ALPHA",
+      startedAt: new Date("2026-01-02T00:00:00Z"),
+    });
+    await matchStore.addPoint({ id: `${matchAsP2.id}:point:1`, matchId: matchAsP2.id, seq: 1, timeMs: 100, winner: "p2", reason: "FAULT", server: "p1", p1Score: 0, p2Score: 1, rallyLength: 2, terminalBall: {} });
+    await matchStore.addPoint({ id: `${matchAsP2.id}:point:2`, matchId: matchAsP2.id, seq: 2, timeMs: 200, winner: "p1", reason: "WINNER", server: "p2", p1Score: 1, p2Score: 1, rallyLength: 3, terminalBall: {} });
+    await matchStore.addShot({ id: `${matchAsP2.id}:shot:1`, matchId: matchAsP2.id, seq: 1, timeMs: 90, pointSeq: 1, exchange: 0, hitter: "p2", isServe: true, contact: {}, outgoing: {}, charge: 0.5, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 30, intent: "serve", smash: true });
+    await matchStore.addShot({ id: `${matchAsP2.id}:shot:2`, matchId: matchAsP2.id, seq: 2, timeMs: 150, pointSeq: 1, exchange: 1, hitter: "p1", isServe: false, contact: {}, outgoing: {}, charge: 0, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 50, intent: "drive", smash: false });
+    await matchStore.finishMatch({ matchId: matchAsP2.id, endedAt: new Date("2026-01-02T00:01:00Z"), endedReason: "completed", winner: "p1", p1Score: 11, p2Score: 9, durationMs: 60000, totalPoints: 2, totalShots: 2 });
+
+    const noAuthResponse = await fetch(`${serverHttp(colyseus)}/api/me/stats`);
+    assert.strictEqual(noAuthResponse.status, 401);
+
+    const response = await fetch(`${serverHttp(colyseus)}/api/me/stats`, { headers: { Authorization: `Bearer ${alpha.token}` } });
+    const data = await response.json();
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(data.stats.matches, 2);
+    assert.strictEqual(data.stats.wins, 1);
+    assert.strictEqual(data.stats.losses, 1);
+    assert.strictEqual(data.stats.winRate, 0.5);
+    assert.strictEqual(data.stats.pointsWon, 2);
+    assert.strictEqual(data.stats.pointsLost, 2);
+    assert.strictEqual(data.stats.pointWinRate, 0.5);
+    assert.strictEqual(data.stats.shots, 3);
+    assert.strictEqual(data.stats.smashes, 2);
+    assert.strictEqual(data.stats.fastestShotSpeed, 30);
+    assert.strictEqual(data.stats.avgShotSpeed, 20);
+    assert.strictEqual(data.stats.aces, 1);
+    assert.strictEqual(data.stats.winners, 1);
+    assert.strictEqual(data.stats.faultsCommitted, 1);
+    assert.strictEqual(data.stats.faultsDrawn, 1);
+    assert.strictEqual(data.stats.longestRally, 3);
+    assert.strictEqual(data.stats.avgRally, 1.5);
+    assert.strictEqual(data.stats.recentMatches[0].match.id, matchAsP2.id);
+    assert.strictEqual(data.stats.recentMatches[0].viewerSide, "p2");
+    assert.strictEqual(data.stats.recentMatches[0].replayReady, false);
+    assert.strictEqual(data.stats.recentMatches[1].viewerSide, "p1");
+    assert.strictEqual(data.stats.recentMatches[1].replayReady, true);
+  });
+
   it("records each ranked rematch against the same player", async () => {
     const p1Account = await register(colyseus, "ranked-rematch-p1@example.com", "RPONE");
     const p2Account = await register(colyseus, "ranked-rematch-p2@example.com", "RPTWO");

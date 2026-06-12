@@ -4,7 +4,7 @@ import { useProgress } from '@react-three/drei';
 import { useEffect, useRef, useState } from 'react';
 import { BOTS, COLORS, PLAYER_SPEED, TABLE } from '../constants.js';
 import { inputHud } from '../engine.js';
-import { fetchMyMatches, networkGame } from '../network.js';
+import { fetchMyMatches, fetchMyStats, networkGame } from '../network.js';
 import { replayGame } from '../replay.js';
 import { DEBUG_MODE, RENDER_SCALES, useGameStore } from '../store.js';
 
@@ -297,6 +297,131 @@ function ReplayBrowser() {
   );
 }
 
+function pct(value) {
+  return `${Math.round((Number(value) || 0) * 100)}%`;
+}
+
+function statNumber(value, decimals = 0) {
+  const number = Number(value) || 0;
+  return decimals ? number.toFixed(decimals) : String(Math.round(number));
+}
+
+function ProfileModal({ open, onClose, leaderboard }) {
+  const authUser = useGameStore((state) => state.authUser);
+  const authToken = useGameStore((state) => state.authToken);
+  const rankedProfile = useGameStore((state) => state.rankedProfile);
+  const replayStatus = useGameStore((state) => state.replayStatus);
+  const [stats, setStats] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open || !authUser) return;
+    let cancelled = false;
+    setBusy(true);
+    setError('');
+    fetchMyStats()
+      .then((data) => { if (!cancelled) setStats(data.stats || null); })
+      .catch((err) => { if (!cancelled) setError(err?.message || 'Could not load profile'); })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+  }, [open, authUser]);
+
+  if (!open) return null;
+  const recent = stats?.recentMatches || [];
+  const play = async (matchId, viewerSide = 'p1') => {
+    try {
+      await replayGame.load(matchId, authToken, viewerSide);
+    } catch {
+      // replayGame writes error state.
+    }
+  };
+  return (
+    <div className="profile-veil" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <section className="profile-modal">
+        <header className="profile-head">
+          <div>
+            <span>PLAYER PROFILE</span>
+            <h2>{authUser?.name || 'PLAYER'}</h2>
+          </div>
+          <button onClick={onClose}>CLOSE</button>
+        </header>
+        <div className="profile-rank">
+          <div>
+            <span>RATING</span>
+            <b>{rankedProfile?.rating ?? '—'}</b>
+          </div>
+          <div>
+            <span>RECORD</span>
+            <b>{rankedProfile ? `${rankedProfile.wins}-${rankedProfile.losses}` : '—'}</b>
+          </div>
+          <div>
+            <span>RANKED</span>
+            <b>{rankedProfile?.gamesPlayed ?? 0}</b>
+          </div>
+        </div>
+        {busy && <div className="profile-empty">LOADING PROFILE...</div>}
+        {error && <div className="profile-error">{error}</div>}
+        {stats && (
+          <>
+            <div className="profile-stats">
+              <div><span>MATCHES</span><b>{stats.matches}</b></div>
+              <div><span>WIN RATE</span><b>{pct(stats.winRate)}</b></div>
+              <div><span>POINTS</span><b>{stats.pointsWon}-{stats.pointsLost}</b></div>
+              <div><span>POINT RATE</span><b>{pct(stats.pointWinRate)}</b></div>
+              <div><span>SHOTS</span><b>{stats.shots}</b></div>
+              <div><span>SMASHES</span><b>{stats.smashes}</b></div>
+              <div><span>FASTEST</span><b>{statNumber(stats.fastestShotSpeed, 1)}</b></div>
+              <div><span>AVG SPEED</span><b>{statNumber(stats.avgShotSpeed, 1)}</b></div>
+              <div><span>ACES</span><b>{stats.aces}</b></div>
+              <div><span>WINNERS</span><b>{stats.winners}</b></div>
+              <div><span>FAULTS</span><b>{stats.faultsCommitted}</b></div>
+              <div><span>DRAWN</span><b>{stats.faultsDrawn}</b></div>
+              <div><span>LONGEST</span><b>{stats.longestRally}</b></div>
+              <div><span>AVG RALLY</span><b>{statNumber(stats.avgRally, 1)}</b></div>
+            </div>
+            <div className="profile-split">
+              <section>
+                <h3>RECENT REPLAYS</h3>
+                <div className="profile-recent">
+                  {recent.length === 0 && <div className="profile-empty">NO MATCHES YET</div>}
+                  {recent.map((item) => {
+                    const match = item.match;
+                    const won = match.winner === item.viewerSide;
+                    return (
+                      <div className={`profile-match ${won ? 'won' : 'lost'}`} key={match.id}>
+                        <span>{formatReplayDate(match.endedAt || match.startedAt)}</span>
+                        <b>{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
+                        <em>{item.stats.winners} W · {item.stats.smashes} S · {item.stats.longestRally} R</em>
+                        <button disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
+                          {item.replayReady ? 'PLAY' : 'NO REPLAY'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+              <section>
+                <h3>FULL LEADERBOARD</h3>
+                <div className="profile-board">
+                  {(leaderboard || []).map((entry, index) => (
+                    <div className="leaderboard-row" key={`${entry.rank}-${entry.name}-${index}`}>
+                      <span>#{entry.rank}</span>
+                      <b>{entry.name}</b>
+                      <em>{entry.rating}</em>
+                    </div>
+                  ))}
+                  {(!leaderboard || leaderboard.length === 0) && <div className="leaderboard-empty">NO RANKED MATCHES YET</div>}
+                </div>
+              </section>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function ReplayControls() {
   const mode = useGameStore((state) => state.mode);
   const match = useGameStore((state) => state.replayMatch);
@@ -315,7 +440,7 @@ function ReplayControls() {
       <div className="replay-meta">
         <span>{match.ranked ? 'RANKED REPLAY' : `${match.mode.toUpperCase()} REPLAY`}</span>
         <b>{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
-        {stats && <em>{stats.totalPoints} PTS · {stats.totalShots} SHOTS · {stats.longestRally} RALLY</em>}
+        {stats && <em>{stats.totalPoints} PTS · {stats.totalShots} SHOTS · {stats.longestRally} RALLY · DRAG CAMERA</em>}
       </div>
       <div className="replay-transport">
         <button onClick={() => setReplayPlaying(!playing)}>{playing ? 'PAUSE' : 'PLAY'}</button>
@@ -371,6 +496,7 @@ export function ModePicker() {
   const [code, setCode] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [profileOpen, setProfileOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const joinAttemptedCode = useRef('');
   const run = async (fn) => {
@@ -427,7 +553,10 @@ export function ModePicker() {
               <b>{authUser.name}</b>
               <span>{rankedProfile ? `${rankedProfile.rating} ELO · ${rankedProfile.wins}-${rankedProfile.losses}` : 'RANK LOADING'}</span>
             </div>
-            <button onClick={() => run(() => networkGame.signOut())} disabled={busy}>LOG OUT</button>
+            <div className="mode-row">
+              <button onClick={() => setProfileOpen(true)} disabled={busy}>PROFILE</button>
+              <button onClick={() => run(() => networkGame.signOut())} disabled={busy}>LOG OUT</button>
+            </div>
           </>
         ) : (
           <>
@@ -457,8 +586,8 @@ export function ModePicker() {
       {networkStatus === 'waiting' && <div className="mode-status">SEARCHING{rankedQueueCount ? ` · ${rankedQueueCount}/2` : ''}</div>}
       {networkError && <div className="mode-error">{networkError}</div>}
       <div className="leaderboard">
-        <div className="leaderboard-title">LEADERBOARD</div>
-        {(leaderboard || []).slice(0, 5).map((entry, index) => (
+        <div className="leaderboard-title">TOP 3</div>
+        {(leaderboard || []).slice(0, 3).map((entry, index) => (
           <div className="leaderboard-row" key={`${entry.rank}-${entry.name}-${index}`}>
             <span>#{entry.rank}</span>
             <b>{entry.name}</b>
@@ -468,6 +597,7 @@ export function ModePicker() {
         {(!leaderboard || leaderboard.length === 0) && <div className="leaderboard-empty">NO RANKED MATCHES YET</div>}
       </div>
     </div>
+    <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} leaderboard={leaderboard} />
     <ReplayBrowser />
     </>
   );
