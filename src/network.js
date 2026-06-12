@@ -260,6 +260,16 @@ class NetworkGame {
       if (!emoji) return;
       useGameStore.getState().showEmote(message.side === this.side ? 'player' : 'ai', emoji);
     });
+    room.onMessage('rematch', (message) => {
+      if (message?.started) {
+        this.snapNext = true;
+        resetFx();
+        resetInputHud();
+        useGameStore.getState().setOnlineRematchRequested(false);
+      } else if (message?.requestedBy === this.side) {
+        useGameStore.getState().setOnlineRematchRequested(true);
+      }
+    });
     room.onStateChange((state) => this.syncFromState(state));
     room.onDrop(() => useGameStore.getState().setNetworkStatus('reconnecting'));
     room.onReconnect(() => useGameStore.getState().setNetworkStatus('connected'));
@@ -279,6 +289,13 @@ class NetworkGame {
     return true;
   }
 
+  requestRematch() {
+    if (!this.room || useGameStore.getState().phase !== 'over') return false;
+    useGameStore.getState().setOnlineRematchRequested(true);
+    this.room.send('rematch');
+    return true;
+  }
+
   async disconnect(goHome = true) {
     if (this.queueRoom) {
       const queue = this.queueRoom;
@@ -294,6 +311,7 @@ class NetworkGame {
     this.side = null;
     this.remoteState = null;
     resetInputHud();
+    useGameStore.getState().setOnlineRematchRequested(false);
     this.leaving = false;
     if (goHome) useGameStore.getState().goHome();
   }

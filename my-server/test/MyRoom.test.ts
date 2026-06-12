@@ -255,6 +255,39 @@ describe("backspin room", () => {
     await p2.leave();
   });
 
+  it("starts a rematch against the same online player when both request revenge", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "public" });
+    const p1 = await colyseus.connectTo(room, { name: "P1" });
+    const p2 = await colyseus.connectTo(room, { name: "P2" });
+    const p1Rematches: any[] = [];
+    const p2Rematches: any[] = [];
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+    p1.onMessage("rematch", (message) => p1Rematches.push(message));
+    p2.onMessage("rematch", (message) => p2Rematches.push(message));
+
+    await waitFor(() => room.clients.length === 2, "players joined");
+    room.state.phase = "exchange";
+    room.state.scoreP1 = 10;
+    room.state.scoreP2 = 7;
+    room.point("p1", "WINNER");
+    await waitFor(() => p1.state.toJSON().phase === "over" && p2.state.toJSON().phase === "over", "match over");
+
+    p1.send("rematch");
+    await waitFor(() => p1Rematches.some((message) => message.count === 1), "first rematch request");
+    assert.strictEqual(p1.state.toJSON().phase, "over");
+
+    p2.send("rematch");
+    await waitFor(() => p1.state.toJSON().phase === "serve" && p2.state.toJSON().phase === "serve", "rematch started");
+    assert.ok(p1Rematches.some((message) => message.started === true));
+    assert.ok(p2Rematches.some((message) => message.started === true));
+    assert.strictEqual(p1.state.toJSON().scoreP1, 0);
+    assert.strictEqual(p1.state.toJSON().scoreP2, 0);
+    assert.strictEqual(p1.state.toJSON().winner, "");
+    await p1.leave();
+    await p2.leave();
+  });
+
   it("clamps extreme serves into legal two-bounce reachable serves", () => {
     const sides = ["p1", "p2"] as const;
     const aimXs = [-1, 0, 1];
@@ -450,6 +483,46 @@ describe("backspin room", () => {
     assert.strictEqual(p1Profile.wins, 1);
     assert.strictEqual(p2Profile.losses, 1);
     assert.strictEqual(p1Profile.gamesPlayed, 1);
+    await p1.leave();
+    await p2.leave();
+  });
+
+  it("records each ranked rematch against the same player", async () => {
+    const p1Account = await register(colyseus, "ranked-rematch-p1@example.com", "RPONE");
+    const p2Account = await register(colyseus, "ranked-rematch-p2@example.com", "RPTWO");
+    const room = await colyseus.createRoom<any>("backspin", { ranked: true, mode: "ranked" });
+    const sdk1 = new Client(serverWs(colyseus));
+    const sdk2 = new Client(serverWs(colyseus));
+    sdk1.auth.token = p1Account.token;
+    sdk2.auth.token = p2Account.token;
+    const p1 = await sdk1.joinById(room.roomId, { ranked: true });
+    const p2 = await sdk2.joinById(room.roomId, { ranked: true });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+    p1.onMessage("rematch", () => {});
+    p2.onMessage("rematch", () => {});
+
+    await waitFor(() => room.clients.length === 2, "ranked players joined");
+    room.state.phase = "exchange";
+    room.state.scoreP1 = 10;
+    room.point("p1", "WINNER");
+    await waitFor(async () => (await rankedStore.getProfile(p1Account.user.id)).gamesPlayed === 1, "first ranked match persisted");
+
+    p1.send("rematch");
+    p2.send("rematch");
+    await waitFor(() => p1.state.toJSON().phase === "serve", "ranked rematch started");
+    room.state.phase = "exchange";
+    room.state.scoreP2 = 10;
+    room.point("p2", "WINNER");
+
+    await waitFor(async () => (await rankedStore.getProfile(p1Account.user.id)).gamesPlayed === 2, "second ranked match persisted");
+    const p1Profile = await rankedStore.getProfile(p1Account.user.id);
+    const p2Profile = await rankedStore.getProfile(p2Account.user.id);
+
+    assert.strictEqual(p1Profile.wins, 1);
+    assert.strictEqual(p1Profile.losses, 1);
+    assert.strictEqual(p2Profile.wins, 1);
+    assert.strictEqual(p2Profile.losses, 1);
     await p1.leave();
     await p2.leave();
   });

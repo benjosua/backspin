@@ -32,7 +32,9 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private inputs = new Map<string, Input>();
   private rankedUsers = new Map<Side, string>();
   private emoteSentAt = new Map<string, number>();
+  private rematchRequests = new Set<Side>();
   private rankedMatchRecorded = false;
+  private matchSeq = 0;
   private lastHitter: Side | null = null;
   private bouncedReceiver = false;
   private serveBounceCount = 0;
@@ -67,6 +69,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.onMessage("serve", (client) => this.handleServe(client));
     this.onMessage("profile", (client, message) => this.handleProfile(client, message));
     this.onMessage("emote", (client, message) => this.handleEmote(client, message));
+    this.onMessage("rematch", (client) => this.handleRematch(client));
   }
 
   private async generateRoomCode(requested?: string) {
@@ -117,6 +120,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const leaver = this.sideOf(client);
     this.inputs.delete(client.sessionId);
     this.emoteSentAt.delete(client.sessionId);
+    if (leaver) this.rematchRequests.delete(leaver);
     if (leaver === "p1") this.state.p1 = "";
     else if (leaver === "p2") this.state.p2 = "";
 
@@ -184,6 +188,46 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     if (now - lastSentAt < EMOTE_COOLDOWN_MS) return;
     this.emoteSentAt.set(client.sessionId, now);
     this.broadcast("emote", { side, emoteId, emoji });
+  }
+
+  private handleRematch(client: Client) {
+    const side = this.sideOf(client);
+    if (!side || this.state.phase !== "over" || this.clients.length < 2) return;
+    this.rematchRequests.add(side);
+    this.broadcast("rematch", { requestedBy: side, count: this.rematchRequests.size });
+    if (this.rematchRequests.size >= 2) this.startRematch();
+  }
+
+  private startRematch() {
+    this.rematchRequests.clear();
+    this.rankedMatchRecorded = false;
+    this.matchSeq += 1;
+    this.firstServer = other(this.firstServer);
+    this.pointTimer = 0;
+    this.accumulator = 0;
+    this.lastHitter = null;
+    this.bouncedReceiver = false;
+    this.serveBounceCount = 0;
+    this.state.scoreP1 = 0;
+    this.state.scoreP2 = 0;
+    this.state.winner = "";
+    this.state.pointWinner = "";
+    this.state.pointReason = "";
+    this.state.pointSeq += 1;
+    this.state.p1X = 0;
+    this.state.p2X = 0;
+    for (const input of this.inputs.values()) {
+      input.targetX = 0;
+      input.targetY = 0;
+      input.aimX = 0;
+      input.aimDepth = 0.5;
+      input.vx = 0;
+      input.vy = 0;
+      input.charging = false;
+      input.chargeStartedAt = 0;
+    }
+    this.resetServe();
+    this.broadcast("rematch", { started: true });
   }
 
   private currentServer(): Side {
@@ -293,7 +337,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     if (!p1UserId || !p2UserId || !winnerUserId) return;
     this.rankedMatchRecorded = true;
     void rankedStore.recordMatch({
-      roomId: this.roomId,
+      roomId: `${this.roomId}:${this.matchSeq}`,
       p1UserId,
       p2UserId,
       p1Score: this.state.scoreP1,

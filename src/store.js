@@ -100,6 +100,7 @@ export const useGameStore = create((set, get) => ({
   rankedProfile: null,
   leaderboard: [],
   rankedQueueCount: 0,
+  onlineRematchRequested: false,
   debugRevision: 0,
 
   reveal: () => set({ revealed: true }),
@@ -113,6 +114,7 @@ export const useGameStore = create((set, get) => ({
       roomCode: '',
       onlineSide: null,
       emotes: { player: null, ai: null },
+      onlineRematchRequested: false,
       opponentName: 'OPPONENT',
       scoreP: 0,
       scoreAI: 0,
@@ -133,6 +135,7 @@ export const useGameStore = create((set, get) => ({
       roomCode: '',
       onlineSide: null,
       emotes: { player: null, ai: null },
+      onlineRematchRequested: false,
       opponentName: 'OPPONENT',
       scoreP: 0,
       scoreAI: 0,
@@ -209,6 +212,7 @@ export const useGameStore = create((set, get) => ({
       flashText: '',
       flashId: 0,
       emotes: { player: null, ai: null },
+      onlineRematchRequested: false,
       menuOpen: false,
       resetNonce: state.resetNonce + 1,
     })),
@@ -227,6 +231,7 @@ export const useGameStore = create((set, get) => ({
   setRankedProfile: (rankedProfile) => set({ rankedProfile }),
   setLeaderboard: (leaderboard) => set({ leaderboard }),
   setRankedQueueCount: (rankedQueueCount) => set({ rankedQueueCount }),
+  setOnlineRematchRequested: (onlineRematchRequested) => set({ onlineRematchRequested }),
   syncOnlineState: (next) => set((state) => ({ ...next, flashId: next.phase === 'point' && state.phase !== 'point' ? state.flashId + 1 : state.flashId })),
 
   bumpScore: (who) =>

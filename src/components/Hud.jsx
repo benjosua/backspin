@@ -329,6 +329,7 @@ export function Hud() {
   const networkStatus = useGameStore((state) => state.networkStatus);
   const playerName = useGameStore((state) => state.playerName);
   const onlineOpponentName = useGameStore((state) => state.opponentName);
+  const onlineRematchRequested = useGameStore((state) => state.onlineRematchRequested);
 
   const bot = BOTS.find((item) => item.id === difficulty) ?? BOTS[1];
   const botName = bot.name;
@@ -336,15 +337,19 @@ export function Hud() {
   const opponentName = mode === 'online' ? (onlineOpponentName || 'OPPONENT') : botName;
   const playerWon = winner === 'player';
   const delta = Math.abs(scoreP - scoreAI);
-  const flavor = playerWon
-    ? difficulty === 'rookie'
-      ? 'WARMED UP — PRO IS WAITING'
-      : difficulty === 'pro'
-        ? 'SHARP — THE MASTER AWAITS'
-        : 'FLAWLESS — NOTHING LEFT TO PROVE'
-    : delta <= 2
-      ? 'SO CLOSE — RUN IT BACK'
-      : `THE ${botName} HAD YOUR NUMBER`;
+  const flavor = mode === 'online'
+    ? playerWon
+      ? `${opponentName} WANTS ANOTHER SHOT`
+      : `GET REVENGE AGAINST ${opponentName}`
+    : playerWon
+      ? difficulty === 'rookie'
+        ? 'WARMED UP — PRO IS WAITING'
+        : difficulty === 'pro'
+          ? 'SHARP — THE MASTER AWAITS'
+          : 'FLAWLESS — NOTHING LEFT TO PROVE'
+      : delta <= 2
+        ? 'SO CLOSE — RUN IT BACK'
+        : `THE ${botName} HAD YOUR NUMBER`;
   const firstServe = phase === 'serve' && scoreP === 0 && scoreAI === 0;
   const serveMessage = mode === 'online' && networkStatus === 'waiting'
     ? 'WAITING FOR OPPONENT'
@@ -440,11 +445,26 @@ export function Hud() {
           <div className="over-flavor">{flavor}</div>
           <div className="over-next">
             <div className="over-card">
-              <div className="over-pick">NEXT OPPONENT</div>
-              <DifficultyButtons />
+              {mode === 'online' ? (
+                <>
+                  <div className="over-pick">SAME PLAYER</div>
+                  <div className="over-rematch-copy">RUN IT BACK AGAINST {opponentName}</div>
+                </>
+              ) : (
+                <>
+                  <div className="over-pick">NEXT OPPONENT</div>
+                  <DifficultyButtons />
+                </>
+              )}
             </div>
             <div className="over-actions">
-              {mode !== 'online' && <button className="rematch" onClick={newGame}>REMATCH&nbsp;·&nbsp;{botName}</button>}
+              {mode === 'online' ? (
+                <button className="rematch" onClick={() => networkGame.requestRematch()}>
+                  {onlineRematchRequested ? 'WAITING · REVENGE' : `REVENGE · ${opponentName}`}
+                </button>
+              ) : (
+                <button className="rematch" onClick={newGame}>REMATCH&nbsp;·&nbsp;{botName}</button>
+              )}
               <button className="over-home" onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>↩&nbsp;&nbsp;HOME</button>
             </div>
           </div>
