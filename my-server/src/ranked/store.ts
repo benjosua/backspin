@@ -19,7 +19,14 @@ export type RankedProfile = {
   gamesPlayed: number;
 };
 
-export type LeaderboardEntry = RankedProfile & { rank: number };
+export type LeaderboardEntry = {
+  rank: number;
+  name: string;
+  rating: number;
+  wins: number;
+  losses: number;
+  gamesPlayed: number;
+};
 
 export type RankedMatchRecord = { roomId: string; matchId: string | null; p1UserId: string; p2UserId: string; p1Score: number; p2Score: number; winnerUserId: string; endedReason: string };
 
@@ -54,6 +61,17 @@ function profileRow(row: any): RankedProfile {
   return {
     userId: row.user_id,
     email: row.email,
+    name: row.name,
+    rating: Number(row.rating),
+    wins: Number(row.wins),
+    losses: Number(row.losses),
+    gamesPlayed: Number(row.games_played),
+  };
+}
+
+function leaderboardRow(row: any): LeaderboardEntry {
+  return {
+    rank: Number(row.rank),
     name: row.name,
     rating: Number(row.rating),
     wins: Number(row.wins),
@@ -172,13 +190,13 @@ class PostgresRankedStore implements RankedStore {
   async leaderboard(limit: number) {
     await this.init();
     const result = await this.pool.query(`
-      SELECT p.user_id, u.email, u.name, p.rating, p.wins, p.losses, p.games_played,
+      SELECT u.name, p.rating, p.wins, p.losses, p.games_played,
         rank() OVER (ORDER BY p.rating DESC, p.wins DESC, p.games_played ASC, u.name ASC) AS rank
       FROM ranked_profiles p JOIN users u ON u.id = p.user_id
       ORDER BY p.rating DESC, p.wins DESC, p.games_played ASC, u.name ASC
       LIMIT $1
     `, [Math.max(1, Math.min(100, limit || 50))]);
-    return result.rows.map((row) => ({ ...profileRow(row), rank: Number(row.rank) }));
+    return result.rows.map(leaderboardRow);
   }
 
   async recordMatch(input: MatchInput) {
@@ -284,7 +302,16 @@ class MemoryRankedStore implements RankedStore {
   }
 
   async leaderboard(limit: number) {
-    const rows = await Promise.all([...this.profiles.keys()].map((id) => this.getProfile(id)));
+    const rows = [...this.profiles.entries()].map(([userId, profile]) => {
+      const user = this.users.get(userId);
+      return {
+        name: user?.name ?? "PLAYER",
+        rating: profile.rating,
+        wins: profile.wins,
+        losses: profile.losses,
+        gamesPlayed: profile.gamesPlayed,
+      };
+    });
     return rows
       .sort((a, b) => b.rating - a.rating || b.wins - a.wins || a.gamesPlayed - b.gamesPlayed || a.name.localeCompare(b.name))
       .slice(0, Math.max(1, Math.min(100, limit || 50)))

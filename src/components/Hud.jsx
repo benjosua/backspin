@@ -300,8 +300,8 @@ export function ModePicker() {
       {networkError && <div className="mode-error">{networkError}</div>}
       <div className="leaderboard">
         <div className="leaderboard-title">LEADERBOARD</div>
-        {(leaderboard || []).slice(0, 5).map((entry) => (
-          <div className="leaderboard-row" key={entry.userId}>
+        {(leaderboard || []).slice(0, 5).map((entry, index) => (
+          <div className="leaderboard-row" key={`${entry.rank}-${entry.name}-${index}`}>
             <span>#{entry.rank}</span>
             <b>{entry.name}</b>
             <em>{entry.rating}</em>

@@ -496,12 +496,26 @@ describe("backspin room", () => {
     const data = await response.json();
     const leaderboardResponse = await fetch(`${serverHttp(colyseus)}/api/leaderboard`);
     const leaderboardData = await leaderboardResponse.json();
-    const entry = leaderboardData.leaderboard.find((row: any) => row.userId === account.user.id);
+    const entry = leaderboardData.leaderboard.find((row: any) => row.name === "NEWNAME");
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(data.user.name, "NEWNAME");
     assert.strictEqual(data.profile.name, "NEWNAME");
     assert.strictEqual(entry.name, "NEWNAME");
+  });
+
+  it("does not expose emails or user ids in the public leaderboard", async () => {
+    const account = await register(colyseus, "privacy@example.com", "PRIVATE");
+    const response = await fetch(`${serverHttp(colyseus)}/api/leaderboard`);
+    const data = await response.json();
+    const entry = data.leaderboard.find((row: any) => row.name === "PRIVATE");
+
+    assert.strictEqual(response.status, 200);
+    assert.ok(entry);
+    assert.strictEqual(entry.email, undefined);
+    assert.strictEqual(entry.userId, undefined);
+    assert.strictEqual(JSON.stringify(data).includes("privacy@example.com"), false);
+    assert.strictEqual(JSON.stringify(data).includes(account.user.id), false);
   });
 
   it("rejects ranked queue clients without auth", async () => {
