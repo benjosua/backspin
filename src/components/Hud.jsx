@@ -159,11 +159,22 @@ export function ModePicker() {
   const start = useGameStore((state) => state.start);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
-  if (started || !revealed) return null;
+  const joinAttemptedCode = useRef('');
   const run = async (fn) => {
     setBusy(true);
     try { await fn(); } finally { setBusy(false); }
   };
+  const updateCode = (value) => setCode(value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5));
+  useEffect(() => {
+    if (code.length < 5) {
+      joinAttemptedCode.current = '';
+      return;
+    }
+    if (busy || joinAttemptedCode.current === code) return;
+    joinAttemptedCode.current = code;
+    run(() => networkGame.joinPrivate(code));
+  }, [code, busy]);
+  if (started || !revealed) return null;
   return (
     <div className="mode-picker" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
       <div className="mode-title">MODE</div>
@@ -183,8 +194,7 @@ export function ModePicker() {
       </div>
       <div className="mode-row private">
         <button onClick={() => run(() => networkGame.createPrivate())} disabled={busy}>CREATE ROOM</button>
-        <input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="CODE" maxLength={8} />
-        <button onClick={() => run(() => networkGame.joinPrivate(code))} disabled={busy || !code.trim()}>JOIN CODE</button>
+        <input value={code} onChange={(event) => updateCode(event.target.value)} placeholder="CODE" maxLength={5} />
       </div>
       {networkStatus === 'connecting' && <div className="mode-status">CONNECTING...</div>}
       {networkStatus === 'waiting' && <div className="mode-status">SEARCHING... {roomCode}</div>}
