@@ -28,10 +28,10 @@ export function DesktopOnlyGate({ children }) {
 
   if (blocked) {
     return (
-      <div className="desktop-only">
-        <div className="desktop-only-title" aria-hidden="true">BACKSPIN</div>
-        <p className="desktop-only-msg">This is a desktop-only experiment.</p>
-        <p className="desktop-only-hint">Open on a computer to play.</p>
+      <div className="fixed inset-0 z-[10001] flex flex-col items-center justify-center gap-5 bg-background p-8 text-center text-foreground">
+        <div className="pl-[0.34em] text-6xl font-semibold tracking-[0.34em] text-foreground" aria-hidden="true">BACKSPIN</div>
+        <p className="max-w72 text-sm text-muted-foreground">This is a desktop-only experiment.</p>
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Open on a computer to play.</p>
       </div>
     );
   }

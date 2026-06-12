@@ -7,12 +7,24 @@ import { inputHud } from '../engine.js';
 import { fetchMyMatches, fetchMyStats, networkGame } from '../network.js';
 import { replayGame } from '../replay.js';
 import { DEBUG_MODE, RENDER_SCALES, useGameStore } from '../store.js';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { cn } from '@/lib/utils';
 
 const MATCH_TO = 11;
 const padScore = (value) => String(value).padStart(2, '0');
 const dialRadius = 30;
 const dialCircumference = Math.PI * 2 * dialRadius;
 const isCoarsePointer = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+const glassPanel = 'pointer-events-auto rounded-3xl border bg-popover/90 p-6 text-popover-foreground shadow-xl ring-1 ring-foreground/5 backdrop-blur-md';
+const labelText = 'text-[10px] font-medium uppercase tracking-[0.34em] text-muted-foreground';
+const row = 'flex flex-wrap items-center justify-center gap-2';
+const statBox = 'rounded-2xl border bg-background/70 p-3 shadow-sm';
+const activeButton = 'bg-primary text-primary-foreground hover:bg-primary/90';
 
 function stop(event) {
   event.stopPropagation();
@@ -75,16 +87,16 @@ export function ChargeDial() {
 
   return (
     <>
-      <div className="dial" ref={dial}>
-        <svg viewBox="0 0 80 80" width="80" height="80">
-          <circle cx="40" cy="40" r={dialRadius} className="dial-track" />
-          <circle ref={arc} cx="40" cy="40" r={dialRadius} className="dial-arc" style={{ strokeDasharray: dialCircumference, strokeDashoffset: dialCircumference }} />
+      <div className="absolute bottom-14 left-8 flex size-20 items-center justify-center transition-transform" ref={dial}>
+        <svg className="absolute -rotate-90" viewBox="0 0 80 80" width="80" height="80">
+          <circle cx="40" cy="40" r={dialRadius} className="fill-none stroke-border stroke-[3]" />
+          <circle ref={arc} cx="40" cy="40" r={dialRadius} className="fill-none stroke-primary stroke-[3] [stroke-linecap:round]" style={{ strokeDasharray: dialCircumference, strokeDashoffset: dialCircumference }} />
         </svg>
-        <span ref={dot} className="dial-dot" />
-        <span ref={label} className="dial-label">SPIN</span>
+        <span ref={dot} className="absolute size-2 rounded-full bg-primary shadow-lg" />
+        <span ref={label} className="absolute left-24 top-8 whitespace-nowrap text-sm font-medium tracking-[0.18em] text-foreground">SPIN</span>
       </div>
-      <div className="aim-readout" ref={aim}>AIM CENTER · MID · SPIN 0 · POWER 0</div>
-      <div className="callout" ref={callout} />
+      <div className="absolute bottom-10 left-32 whitespace-nowrap text-[10px] font-medium tracking-[0.18em] text-muted-foreground" ref={aim}>AIM CENTER · MID · SPIN 0 · POWER 0</div>
+      <div className="pointer-events-none absolute left-1/2 top-[44%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap text-4xl font-medium tracking-[0.18em]" ref={callout} />
     </>
   );
 }
@@ -133,9 +145,9 @@ export function EmoteBubbles() {
   }, []);
 
   return (
-    <div className="emote-layer" aria-hidden>
-      <div ref={player} className="emote-bubble you" />
-      <div ref={opponent} className="emote-bubble opponent" />
+    <div className="pointer-events-none fixed inset-0 z-10" aria-hidden>
+      <div ref={player} className="absolute grid size-14 place-items-center rounded-full border bg-popover/90 text-3xl shadow-xl backdrop-blur-md" />
+      <div ref={opponent} className="absolute grid size-14 place-items-center rounded-full border bg-popover/90 text-3xl shadow-xl backdrop-blur-md" />
     </div>
   );
 }
@@ -146,11 +158,11 @@ export function DifficultyButtons() {
   const networkStatus = useGameStore((state) => state.networkStatus);
   const setDifficulty = useGameStore((state) => state.setDifficulty);
   return (
-    <div className="seg">
+    <div className={row}>
       {BOTS.map((bot) => (
-        <button key={bot.id} className={`seg-btn ${bot.id === difficulty ? 'on' : ''}`} onClick={() => setDifficulty(bot.id)} title={bot.tag}>
+        <Button variant="outline" size="sm" key={bot.id} className={cn('uppercase tracking-[0.16em]', bot.id === difficulty && activeButton)} onClick={() => setDifficulty(bot.id)} title={bot.tag}>
           {bot.name}
-        </button>
+        </Button>
       ))}
     </div>
   );
@@ -162,9 +174,9 @@ export function PlayerSpeedSetting() {
   const playerSpeed = useGameStore((state) => state.playerSpeed);
   const setPlayerSpeed = useGameStore((state) => state.setPlayerSpeed);
   return (
-    <label className="speed-setting" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <span>PLAYER SPEED</span>
-      <input
+    <label className="grid grid-cols-[1fr_72px_auto] items-center gap-2" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <span className={labelText}>PLAYER SPEED</span>
+      <Input
         type="number"
         min={Math.round(PLAYER_SPEED.min * 100)}
         max={Math.round(PLAYER_SPEED.max * 100)}
@@ -173,7 +185,7 @@ export function PlayerSpeedSetting() {
         onChange={(event) => setPlayerSpeed(Number(event.target.value) / 100)}
         aria-label="player speed percent"
       />
-      <em>%</em>
+      <em className="text-xs not-italic text-muted-foreground">%</em>
     </label>
   );
 }
@@ -182,29 +194,29 @@ export function PerformanceSettings() {
   const performancePrefs = useGameStore((state) => state.performancePrefs);
   const setPerformancePref = useGameStore((state) => state.setPerformancePref);
   return (
-    <div className="perf-settings" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <div className="perf-title">PERFORMANCE</div>
-      <div className="perf-row">
-        <span>RENDER SCALE</span>
-        <div className="perf-seg">
+    <div className="grid gap-3 rounded-2xl border bg-background/60 p-3" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <div className={labelText}>PERFORMANCE</div>
+      <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+        <span className={labelText}>RENDER SCALE</span>
+        <div className="flex gap-1">
           {Object.entries(RENDER_SCALES).map(([key, value]) => (
-            <button
+            <Button variant="outline" size="sm"
               key={key}
               type="button"
-              className={performancePrefs.renderScale === key ? 'on' : ''}
+              className={cn('uppercase tracking-[0.12em]', performancePrefs.renderScale === key && activeButton)}
               onClick={() => setPerformancePref('renderScale', key)}
             >
               {value.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
-      <label className="perf-toggle">
-        <span>EXTRA FX</span>
-        <input
-          type="checkbox"
+      <label className="grid grid-cols-[1fr_auto] items-center gap-3">
+        <span className={labelText}>EXTRA FX</span>
+        <Switch
           checked={performancePrefs.extraFx}
-          onChange={(event) => setPerformancePref('extraFx', event.target.checked)}
+          onCheckedChange={(checked) => setPerformancePref('extraFx', checked)}
+          aria-label="extra effects"
         />
       </label>
     </div>
@@ -249,45 +261,46 @@ function ReplayBrowser() {
   };
   const directId = lookup.trim();
   return (
-    <div className="replay-veil" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <section className="replay-browser">
-        <header className="replay-browser-head">
+    <div className="fixed inset-0 z-20 grid place-items-center bg-background/50 p-6 backdrop-blur-sm" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <section className={cn(glassPanel, 'grid max-h-[86vh] w-[min(860px,92vw)] gap-4 overflow-auto')}>
+        <header className="flex items-center justify-between gap-4">
           <div>
-            <span>REPLAY ROOM</span>
-            <h2>LOAD REPLAY</h2>
+            <span className={labelText}>REPLAY ROOM</span>
+            <h2 className="mt-1 text-3xl font-medium tracking-[0.12em]">LOAD REPLAY</h2>
           </div>
-          <button onClick={closeReplayBrowser}>CLOSE</button>
+          <Button variant="outline" size="sm" onClick={closeReplayBrowser}>CLOSE</Button>
         </header>
-        <div className="replay-lookup">
-          <input value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="MATCH ID" aria-label="match id" />
-          <button disabled={!directId || replayStatus === 'loading'} onClick={() => play(directId)}>PLAY ID</button>
+        <div className="grid grid-cols-[1fr_auto] gap-2">
+          <Input value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="MATCH ID" aria-label="match id" />
+          <Button variant="outline" size="sm" disabled={!directId || replayStatus === 'loading'} onClick={() => play(directId)}>PLAY ID</Button>
         </div>
-        {busy && <div className="replay-empty">LOADING MATCHES...</div>}
-        {replayError && replayStatus === 'error' && <div className="replay-error">{replayError}</div>}
-        <div className="replay-list">
-          {!busy && matches.length === 0 && <div className="replay-empty">{authUser ? 'NO SAVED REPLAYS YET' : 'PASTE A MATCH ID TO WATCH'}</div>}
+        {busy && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">LOADING MATCHES...</div>}
+        {replayError && replayStatus === 'error' && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-destructive">{replayError}</div>}
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
+          {!busy && matches.length === 0 && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">{authUser ? 'NO SAVED REPLAYS YET' : 'PASTE A MATCH ID TO WATCH'}</div>}
           {matches.map((item) => {
             const match = item.match;
             const viewerWon = match.winner === item.viewerSide;
             return (
-              <article className={`replay-card ${viewerWon ? 'won' : 'lost'}`} key={match.id}>
-                <div className="replay-card-top">
+              <article className={cn('relative grid gap-3 overflow-hidden rounded-2xl border bg-background/70 p-4 shadow-sm', viewerWon ? 'border-primary/30' : 'border-border')} key={match.id}>
+                <div className={cn('absolute inset-y-0 left-0 w-1', viewerWon ? 'bg-primary' : 'bg-muted-foreground')} />
+                <div className="flex items-center justify-between gap-2 text-[10px] font-medium tracking-[0.14em] text-muted-foreground">
                   <span>{formatReplayDate(match.endedAt || match.startedAt)}</span>
-                  <b>{match.ranked ? 'RANKED' : match.mode.toUpperCase()}</b>
+                  <Badge variant={match.ranked ? 'default' : 'secondary'}>{match.ranked ? 'RANKED' : match.mode.toUpperCase()}</Badge>
                 </div>
-                <div className="replay-scoreline">
-                  <span>{match.p1Name}</span>
-                  <strong>{match.p1Score}—{match.p2Score}</strong>
-                  <span>{match.p2Name}</span>
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  <span className="truncate text-sm font-medium tracking-[0.08em]">{match.p1Name}</span>
+                  <strong className="text-2xl font-medium">{match.p1Score}—{match.p2Score}</strong>
+                  <span className="truncate text-right text-sm font-medium tracking-[0.08em]">{match.p2Name}</span>
                 </div>
-                <div className="replay-stats">
+                <div className="flex justify-between gap-2 text-[10px] font-medium tracking-[0.12em] text-muted-foreground">
                   <span>{item.stats.winners} WINNERS</span>
                   <span>{item.stats.smashes} SMASHES</span>
                   <span>{item.stats.longestRally} LONGEST</span>
                 </div>
-                <button disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
+                <Button variant="outline" size="sm" disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
                   {item.replayReady ? 'PLAY' : 'NOT READY'}
-                </button>
+                </Button>
               </article>
             );
           })}
@@ -337,81 +350,81 @@ function ProfileModal({ open, onClose, leaderboard }) {
     }
   };
   return (
-    <div className="profile-veil" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <section className="profile-modal">
-        <header className="profile-head">
+    <div className="fixed inset-0 z-20 grid place-items-center bg-background/50 p-6 backdrop-blur-sm" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <section className={cn(glassPanel, 'grid max-h-[88vh] w-[min(1040px,94vw)] gap-4 overflow-auto')}>
+        <header className="flex items-center justify-between gap-4">
           <div>
-            <span>PLAYER PROFILE</span>
-            <h2>{authUser?.name || 'PLAYER'}</h2>
+            <span className={labelText}>PLAYER PROFILE</span>
+            <h2 className="mt-1 text-3xl font-medium tracking-[0.12em]">{authUser?.name || 'PLAYER'}</h2>
           </div>
-          <button onClick={onClose}>CLOSE</button>
+          <Button variant="outline" size="sm" onClick={onClose}>CLOSE</Button>
         </header>
-        <div className="profile-rank">
-          <div>
-            <span>RATING</span>
+        <div className="grid grid-cols-3 gap-3">
+          <div className={statBox}>
+            <span className={labelText}>RATING</span>
             <b>{rankedProfile?.rating ?? '—'}</b>
           </div>
-          <div>
-            <span>RECORD</span>
+          <div className={statBox}>
+            <span className={labelText}>RECORD</span>
             <b>{rankedProfile ? `${rankedProfile.wins}-${rankedProfile.losses}` : '—'}</b>
           </div>
-          <div>
-            <span>RANKED</span>
+          <div className={statBox}>
+            <span className={labelText}>RANKED</span>
             <b>{rankedProfile?.gamesPlayed ?? 0}</b>
           </div>
         </div>
-        {busy && <div className="profile-empty">LOADING PROFILE...</div>}
-        {error && <div className="profile-error">{error}</div>}
+        {busy && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">LOADING PROFILE...</div>}
+        {error && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-destructive">{error}</div>}
         {stats && (
           <>
-            <div className="profile-stats">
-              <div><span>MATCHES</span><b>{stats.matches}</b></div>
-              <div><span>WIN RATE</span><b>{pct(stats.winRate)}</b></div>
-              <div><span>POINTS</span><b>{stats.pointsWon}-{stats.pointsLost}</b></div>
-              <div><span>POINT RATE</span><b>{pct(stats.pointWinRate)}</b></div>
-              <div><span>SHOTS</span><b>{stats.shots}</b></div>
-              <div><span>SMASHES</span><b>{stats.smashes}</b></div>
-              <div><span>FASTEST</span><b>{statNumber(stats.fastestShotSpeed, 1)}</b></div>
-              <div><span>AVG SPEED</span><b>{statNumber(stats.avgShotSpeed, 1)}</b></div>
-              <div><span>ACES</span><b>{stats.aces}</b></div>
-              <div><span>WINNERS</span><b>{stats.winners}</b></div>
-              <div><span>FAULTS</span><b>{stats.faultsCommitted}</b></div>
-              <div><span>DRAWN</span><b>{stats.faultsDrawn}</b></div>
-              <div><span>LONGEST</span><b>{stats.longestRally}</b></div>
-              <div><span>AVG RALLY</span><b>{statNumber(stats.avgRally, 1)}</b></div>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-3">
+              <div className={statBox}><span className={labelText}>MATCHES</span><b>{stats.matches}</b></div>
+              <div className={statBox}><span className={labelText}>WIN RATE</span><b>{pct(stats.winRate)}</b></div>
+              <div className={statBox}><span className={labelText}>POINTS</span><b>{stats.pointsWon}-{stats.pointsLost}</b></div>
+              <div className={statBox}><span className={labelText}>POINT RATE</span><b>{pct(stats.pointWinRate)}</b></div>
+              <div className={statBox}><span className={labelText}>SHOTS</span><b>{stats.shots}</b></div>
+              <div className={statBox}><span className={labelText}>SMASHES</span><b>{stats.smashes}</b></div>
+              <div className={statBox}><span className={labelText}>FASTEST</span><b>{statNumber(stats.fastestShotSpeed, 1)}</b></div>
+              <div className={statBox}><span className={labelText}>AVG SPEED</span><b>{statNumber(stats.avgShotSpeed, 1)}</b></div>
+              <div className={statBox}><span className={labelText}>ACES</span><b>{stats.aces}</b></div>
+              <div className={statBox}><span className={labelText}>WINNERS</span><b>{stats.winners}</b></div>
+              <div className={statBox}><span className={labelText}>FAULTS</span><b>{stats.faultsCommitted}</b></div>
+              <div className={statBox}><span className={labelText}>DRAWN</span><b>{stats.faultsDrawn}</b></div>
+              <div className={statBox}><span className={labelText}>LONGEST</span><b>{stats.longestRally}</b></div>
+              <div className={statBox}><span className={labelText}>AVG RALLY</span><b>{statNumber(stats.avgRally, 1)}</b></div>
             </div>
-            <div className="profile-split">
-              <section>
-                <h3>RECENT REPLAYS</h3>
-                <div className="profile-recent">
-                  {recent.length === 0 && <div className="profile-empty">NO MATCHES YET</div>}
+            <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(240px,.75fr)] gap-4">
+              <section className="grid gap-3 rounded-2xl border bg-background/60 p-4">
+                <h3 className={labelText}>RECENT REPLAYS</h3>
+                <div className="grid gap-2">
+                  {recent.length === 0 && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">NO MATCHES YET</div>}
                   {recent.map((item) => {
                     const match = item.match;
                     const won = match.winner === item.viewerSide;
                     return (
-                      <div className={`profile-match ${won ? 'won' : 'lost'}`} key={match.id}>
-                        <span>{formatReplayDate(match.endedAt || match.startedAt)}</span>
-                        <b>{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
-                        <em>{item.stats.winners} W · {item.stats.smashes} S · {item.stats.longestRally} R</em>
-                        <button disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
+                      <div className={cn('grid grid-cols-[92px_1fr_auto_auto] items-center gap-2 rounded-2xl border bg-background/70 p-3 text-xs shadow-sm', won ? 'border-primary/30' : 'border-border')} key={match.id}>
+                        <span className="text-[10px] font-medium tracking-[0.12em] text-muted-foreground">{formatReplayDate(match.endedAt || match.startedAt)}</span>
+                        <b className="truncate tracking-[0.08em]">{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
+                        <em className="text-[10px] not-italic tracking-[0.12em] text-muted-foreground">{item.stats.winners} W · {item.stats.smashes} S · {item.stats.longestRally} R</em>
+                        <Button variant="outline" size="sm" disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
                           {item.replayReady ? 'PLAY' : 'NO REPLAY'}
-                        </button>
+                        </Button>
                       </div>
                     );
                   })}
                 </div>
               </section>
-              <section>
-                <h3>FULL LEADERBOARD</h3>
-                <div className="profile-board">
+              <section className="grid gap-3 rounded-2xl border bg-background/60 p-4">
+                <h3 className={labelText}>FULL LEADERBOARD</h3>
+                <div className="grid max-h-[360px] gap-1 overflow-auto pr-1">
                   {(leaderboard || []).map((entry, index) => (
-                    <div className="leaderboard-row" key={`${entry.rank}-${entry.name}-${index}`}>
-                      <span>#{entry.rank}</span>
-                      <b>{entry.name}</b>
-                      <em>{entry.rating}</em>
+                    <div className="grid grid-cols-[40px_1fr_56px] items-center gap-2 text-xs" key={`${entry.rank}-${entry.name}-${index}`}>
+                      <span className="text-muted-foreground">#{entry.rank}</span>
+                      <b className="truncate">{entry.name}</b>
+                      <em className="not-italic text-muted-foreground">{entry.rating}</em>
                     </div>
                   ))}
-                  {(!leaderboard || leaderboard.length === 0) && <div className="leaderboard-empty">NO RANKED MATCHES YET</div>}
+                  {(!leaderboard || leaderboard.length === 0) && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">NO RANKED MATCHES YET</div>}
                 </div>
               </section>
             </div>
@@ -436,42 +449,41 @@ function ReplayControls() {
   const points = replayGame.playerRef?.points || [];
   const shots = replayGame.playerRef?.shots || [];
   return (
-    <div className="replay-controls" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <div className="replay-meta">
-        <span>{match.ranked ? 'RANKED REPLAY' : `${match.mode.toUpperCase()} REPLAY`}</span>
-        <b>{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
-        {stats && <em>{stats.totalPoints} PTS · {stats.totalShots} SHOTS · {stats.longestRally} RALLY · DRAG CAMERA</em>}
+    <div className={cn(glassPanel, 'fixed bottom-5 left-1/2 z-10 grid w-[min(980px,94vw)] -translate-x-1/2 gap-3 p-4')} onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
+        <span className={labelText}>{match.ranked ? 'RANKED REPLAY' : `${match.mode.toUpperCase()} REPLAY`}</span>
+        <b className="text-sm tracking-[0.12em]">{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
+        {stats && <em className="text-[10px] not-italic tracking-[0.12em] text-muted-foreground">{stats.totalPoints} PTS · {stats.totalShots} SHOTS · {stats.longestRally} RALLY · DRAG CAMERA</em>}
       </div>
-      <div className="replay-transport">
-        <button onClick={() => setReplayPlaying(!playing)}>{playing ? 'PAUSE' : 'PLAY'}</button>
-        <span>{formatReplayClock(timeMs)}</span>
-        <input
-          type="range"
-          min="0"
+      <div className="grid grid-cols-[auto_auto_1fr_auto_repeat(4,auto)] items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => setReplayPlaying(!playing)}>{playing ? 'PAUSE' : 'PLAY'}</Button>
+        <span className="text-[10px] font-medium tracking-[0.12em] text-muted-foreground">{formatReplayClock(timeMs)}</span>
+        <Slider
+          min={0}
           max={Math.max(1, durationMs)}
           value={Math.min(timeMs, Math.max(1, durationMs))}
-          onChange={(event) => {
+          onValueChange={(value) => {
             setReplayPlaying(false);
-            replayGame.seek(Number(event.target.value));
+            replayGame.seek(Number(value));
           }}
           aria-label="replay timeline"
         />
-        <span>{formatReplayClock(durationMs)}</span>
+        <span className="text-[10px] font-medium tracking-[0.12em] text-muted-foreground">{formatReplayClock(durationMs)}</span>
         {[0.5, 1, 2].map((value) => (
-          <button key={value} className={speed === value ? 'on' : ''} onClick={() => setReplaySpeed(value)}>{value}x</button>
+          <Button variant="outline" size="sm" key={value} className={speed === value ? activeButton : ''} onClick={() => setReplaySpeed(value)}>{value}x</Button>
         ))}
-        <button onClick={() => replayGame.exit()}>EXIT</button>
+        <Button variant="outline" size="sm" onClick={() => replayGame.exit()}>EXIT</Button>
       </div>
-      <div className="replay-jumps">
+      <div className="flex gap-2 overflow-x-auto">
         {points.slice(0, 8).map((point) => (
-          <button key={point.id} onClick={() => { setReplayPlaying(false); replayGame.jumpToPoint(point.seq); }}>
+          <Button variant="outline" size="sm" key={point.id} onClick={() => { setReplayPlaying(false); replayGame.jumpToPoint(point.seq); }}>
             P{point.seq} · {point.p1Score}-{point.p2Score}
-          </button>
+          </Button>
         ))}
         {shots.slice(0, 8).map((shot) => (
-          <button key={shot.id} onClick={() => { setReplayPlaying(false); replayGame.jumpToShot(shot.id); }}>
+          <Button variant="outline" size="sm" key={shot.id} onClick={() => { setReplayPlaying(false); replayGame.jumpToShot(shot.id); }}>
             S{shot.seq}{shot.smash ? ' · SMASH' : ''}
-          </button>
+          </Button>
         ))}
       </div>
     </div>
@@ -534,11 +546,11 @@ export function ModePicker() {
   if (started || !revealed) return null;
   return (
     <>
-    <div className="mode-picker" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <div className="mode-title">MODE</div>
-      <div className="mode-row name">
-        <input
-          className="player-name-input"
+    <div className={cn(glassPanel, 'fixed bottom-7 left-1/2 z-[6] grid w-[min(760px,92vw)] -translate-x-1/2 gap-3')} onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <div className={cn(labelText, 'text-center')}>MODE</div>
+      <div className={row}>
+        <Input
+          className="w-48 text-center font-medium uppercase tracking-[0.18em]"
           value={playerName}
           onChange={(event) => setPlayerName(event.target.value)}
           placeholder="NAME"
@@ -546,55 +558,55 @@ export function ModePicker() {
           aria-label="player name"
         />
       </div>
-      <div className="auth-box">
+      <div className="grid gap-3 border-y py-3">
         {authUser ? (
           <>
-            <div className="auth-status">
+            <div className="flex items-center justify-center gap-3 text-xs">
               <b>{authUser.name}</b>
-              <span>{rankedProfile ? `${rankedProfile.rating} ELO · ${rankedProfile.wins}-${rankedProfile.losses}` : 'RANK LOADING'}</span>
+              <span className="text-muted-foreground">{rankedProfile ? `${rankedProfile.rating} ELO · ${rankedProfile.wins}-${rankedProfile.losses}` : 'RANK LOADING'}</span>
             </div>
-            <div className="mode-row">
-              <button onClick={() => setProfileOpen(true)} disabled={busy}>PROFILE</button>
-              <button onClick={() => run(() => networkGame.signOut())} disabled={busy}>LOG OUT</button>
+            <div className={row}>
+              <Button variant="outline" size="sm" onClick={() => setProfileOpen(true)} disabled={busy}>PROFILE</Button>
+              <Button variant="outline" size="sm" onClick={() => run(() => networkGame.signOut())} disabled={busy}>LOG OUT</Button>
             </div>
           </>
         ) : (
           <>
-            <div className="mode-row auth-inputs">
-              <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="EMAIL" aria-label="email" />
-              <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="PASSWORD" type="password" aria-label="password" />
+            <div className={row}>
+              <Input className="w-48 text-center" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="EMAIL" aria-label="email" />
+              <Input className="w-44 text-center" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="PASSWORD" type="password" aria-label="password" />
             </div>
-            <div className="mode-row">
-              <button onClick={() => run(() => networkGame.signIn(email, password))} disabled={busy || !email || !password}>SIGN IN</button>
-              <button onClick={() => run(() => networkGame.register(email, password))} disabled={busy || !email || !password}>REGISTER</button>
+            <div className={row}>
+              <Button variant="outline" size="sm" onClick={() => run(() => networkGame.signIn(email, password))} disabled={busy || !email || !password}>SIGN IN</Button>
+              <Button variant="outline" size="sm" onClick={() => run(() => networkGame.register(email, password))} disabled={busy || !email || !password}>REGISTER</Button>
             </div>
           </>
         )}
       </div>
-      <div className="mode-row">
-        <button onClick={start} disabled={busy}>OFFLINE</button>
-        <button onClick={() => run(() => networkGame.quickMatch())} disabled={busy}>QUICK MATCH</button>
-        <button onClick={() => run(() => networkGame.rankedMatch())} disabled={busy || !authUser}>RANKED</button>
-        <button onClick={openReplayBrowser} disabled={busy}>REPLAYS</button>
-        {showTestAi && <button onClick={() => run(() => networkGame.testAiMatch(difficulty))} disabled={busy}>TEST AI ONLINE</button>}
+      <div className={row}>
+        <Button variant="outline" size="sm" onClick={start} disabled={busy}>OFFLINE</Button>
+        <Button variant="outline" size="sm" onClick={() => run(() => networkGame.quickMatch())} disabled={busy}>QUICK MATCH</Button>
+        <Button variant="outline" size="sm" onClick={() => run(() => networkGame.rankedMatch())} disabled={busy || !authUser}>RANKED</Button>
+        <Button variant="outline" size="sm" onClick={openReplayBrowser} disabled={busy}>REPLAYS</Button>
+        {showTestAi && <Button variant="outline" size="sm" onClick={() => run(() => networkGame.testAiMatch(difficulty))} disabled={busy}>TEST AI ONLINE</Button>}
       </div>
-      <div className="mode-row private">
-        <button onClick={() => run(() => networkGame.createPrivate())} disabled={busy}>CREATE ROOM</button>
-        <input value={code} onChange={(event) => updateCode(event.target.value)} placeholder="CODE" maxLength={5} />
+      <div className={row}>
+        <Button variant="outline" size="sm" onClick={() => run(() => networkGame.createPrivate())} disabled={busy}>CREATE ROOM</Button>
+        <Input className="w-28 text-center uppercase tracking-[0.18em]" value={code} onChange={(event) => updateCode(event.target.value)} placeholder="CODE" maxLength={5} />
       </div>
-      {networkStatus === 'connecting' && <div className="mode-status">CONNECTING...</div>}
-      {networkStatus === 'waiting' && <div className="mode-status">SEARCHING{rankedQueueCount ? ` · ${rankedQueueCount}/2` : ''}</div>}
-      {networkError && <div className="mode-error">{networkError}</div>}
-      <div className="leaderboard">
-        <div className="leaderboard-title">TOP 3</div>
+      {networkStatus === 'connecting' && <div className="text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">CONNECTING...</div>}
+      {networkStatus === 'waiting' && <div className="text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">SEARCHING{rankedQueueCount ? ` · ${rankedQueueCount}/2` : ''}</div>}
+      {networkError && <div className="text-center text-xs font-medium tracking-[0.2em] text-destructive">{networkError}</div>}
+      <div className="grid gap-2 rounded-2xl border bg-background/60 p-3">
+        <div className={cn(labelText, 'text-center')}>TOP 3</div>
         {(leaderboard || []).slice(0, 3).map((entry, index) => (
-          <div className="leaderboard-row" key={`${entry.rank}-${entry.name}-${index}`}>
-            <span>#{entry.rank}</span>
-            <b>{entry.name}</b>
-            <em>{entry.rating}</em>
+          <div className="grid grid-cols-[40px_1fr_56px] items-center gap-2 text-xs" key={`${entry.rank}-${entry.name}-${index}`}>
+            <span className="text-muted-foreground">#{entry.rank}</span>
+            <b className="truncate">{entry.name}</b>
+            <em className="not-italic text-muted-foreground">{entry.rating}</em>
           </div>
         ))}
-        {(!leaderboard || leaderboard.length === 0) && <div className="leaderboard-empty">NO RANKED MATCHES YET</div>}
+        {(!leaderboard || leaderboard.length === 0) && <div className="text-center text-xs font-medium tracking-[0.16em] text-muted-foreground">NO RANKED MATCHES YET</div>}
       </div>
     </div>
     <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} leaderboard={leaderboard} />
@@ -655,121 +667,108 @@ export function Hud() {
     : phase === 'serve' ? (server === 'player' ? 'HOLD · RELEASE TO SERVE' : `${opponentName} SERVES`) : '';
 
   return (
-    <div className="hud">
+    <div className="pointer-events-none fixed inset-0 z-[5]">
       <ReplayControls />
-      {started && menuOpen && phase !== 'over' && <div className="pause-veil" aria-hidden />}
+      {started && menuOpen && phase !== 'over' && <div className="fixed inset-0 bg-background/30 backdrop-blur-sm" aria-hidden />}
 
       {started && (
         <>
-          <div className="top">
-            <div className="match">MATCH TO {MATCH_TO}</div>
-            <div className="scoreboard">
-              <div className={`side ${server === 'player' ? 'serving' : ''}`}>
-                <span className="lbl you">{youName}</span>
-                <span className="num">{padScore(scoreP)}</span>
+          <div className="absolute left-1/2 top-7 hidden -translate-x-1/2 flex-col items-center gap-2">
+            <div className={labelText}>MATCH TO {MATCH_TO}</div>
+            <div className="flex items-start gap-7">
+              <div className="flex flex-col items-center gap-1">
+                <span className={cn(labelText, server === 'player' && 'text-primary')}>{youName}</span>
+                <span className="font-mono text-6xl font-light tabular-nums">{padScore(scoreP)}</span>
               </div>
-              <span className="sep">|</span>
-              <div className={`side ${server === 'ai' ? 'serving' : ''}`}>
-                <span className="lbl cpu">{opponentName}</span>
-                <span className="num">{padScore(scoreAI)}</span>
+              <span className="translate-y-5 text-4xl font-light text-border">|</span>
+              <div className="flex flex-col items-center gap-1">
+                <span className={cn(labelText, server === 'ai' && 'text-primary')}>{opponentName}</span>
+                <span className="font-mono text-6xl font-light tabular-nums">{padScore(scoreAI)}</span>
               </div>
             </div>
-            <div className="pips">
-              <i className={server === 'player' ? 'on you' : ''} />
-              <i className={server === 'ai' ? 'on cpu' : ''} />
+            <div className="flex gap-2">
+              <i className={cn('size-1.5 rounded-full bg-border', server === 'player' && 'bg-primary shadow-lg')} />
+              <i className={cn('size-1.5 rounded-full bg-border', server === 'ai' && 'bg-primary shadow-lg')} />
             </div>
           </div>
-          {serveMessage && <div className="serve-msg">{serveMessage}</div>}
+          {serveMessage && <div className="absolute left-1/2 top-[63%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium tracking-[0.34em] text-foreground">{serveMessage}</div>}
           {flashText && phase !== 'over' && (
-            <div key={flashId} className="flash" style={{ color: flashColor, textShadow: `0 0 30px ${flashColor}55` }}>
+            <div key={flashId} className="pointer-events-none absolute left-1/2 top-1/3 whitespace-nowrap text-5xl font-medium tracking-[0.14em] [animation:hudPop_1s_cubic-bezier(.2,1.3,.3,1)_forwards]" style={{ color: flashColor, textShadow: `0 0 30px ${flashColor}55` }}>
               {flashText}
             </div>
           )}
           <ChargeDial />
           {mode === 'online' && <EmoteBubbles />}
-          {firstServe && <div className="hint">MOVE&nbsp;TO&nbsp;AIM&nbsp;·&nbsp;HOLD&nbsp;CHARGE&nbsp;·&nbsp;FLICK&nbsp;SPIN</div>}
+          {firstServe && <div className="absolute bottom-9 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium tracking-[0.28em] text-muted-foreground">MOVE&nbsp;TO&nbsp;AIM&nbsp;·&nbsp;HOLD&nbsp;CHARGE&nbsp;·&nbsp;FLICK&nbsp;SPIN</div>}
           {!isCoarsePointer && phase !== 'over' && !menuOpen && (
-            <div className="esc-hint" aria-hidden>
-              <kbd>ESC</kbd>
+            <div className="pointer-events-none absolute right-7 top-24 flex items-center gap-2 rounded-full border bg-popover/80 px-3 py-1 text-[10px] font-medium tracking-[0.2em] text-muted-foreground shadow-sm backdrop-blur" aria-hidden>
+              <kbd className="rounded-md bg-muted px-1.5 py-0.5 text-foreground">ESC</kbd>
               <span>PAUSE</span>
             </div>
           )}
         </>
       )}
 
-      <button
-        className={`menu-btn ${menuOpen ? 'open' : ''}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          toggleMenu();
-        }}
-        onPointerDown={stop}
-        onPointerUp={stop}
-        aria-label={menuOpen ? 'close menu' : 'menu'}
-      >
-        <span />
-        <span />
-        <span />
-      </button>
-
-      {menuOpen && (
-        <div className="panel">
-          <h3>{started ? 'PAUSED' : 'CONTROLS'}</h3>
-          <ul>
-            <li><b>Move</b><span>{isCoarsePointer ? 'Drag' : 'A / D'}</span></li>
-            <li><b>Aim landing</b><span>{isCoarsePointer ? 'Move across table' : 'Mouse'}</span></li>
-            <li><b>Charge power</b><span>{isCoarsePointer ? 'Hold' : 'Hold mouse · Space'}</span></li>
-            <li><b>Spin</b><span>{isCoarsePointer ? 'Flick at contact' : 'W / S'}</span></li>
-            <li><b>Smash</b><span>Charge a high ball</span></li>
-            <li><b>Serve</b><span>Release</span></li>
-            {mode === 'online' && <li><b>Emote</b><span>1 / 2 / 3 / 4</span></li>}
-            {!isCoarsePointer && <li><b>Pause · back</b><span>Esc</span></li>}
+      {started && menuOpen && phase !== 'over' && (
+        <div className={cn(glassPanel, 'absolute left-1/2 top-1/2 grid w-[min(420px,92vw)] -translate-x-1/2 -translate-y-1/2 gap-4')}>
+          <h3 className={cn(labelText, 'text-center')}>PAUSED</h3>
+          <ul className="grid gap-3 text-xs">
+            <li className="flex justify-between gap-4"><b>Move</b><span className="text-muted-foreground">{isCoarsePointer ? 'Drag' : 'A / D'}</span></li>
+            <li className="flex justify-between gap-4"><b>Aim landing</b><span className="text-muted-foreground">{isCoarsePointer ? 'Move across table' : 'Mouse'}</span></li>
+            <li className="flex justify-between gap-4"><b>Charge power</b><span className="text-muted-foreground">{isCoarsePointer ? 'Hold' : 'Hold mouse · Space'}</span></li>
+            <li className="flex justify-between gap-4"><b>Spin</b><span className="text-muted-foreground">{isCoarsePointer ? 'Flick at contact' : 'W / S'}</span></li>
+            <li className="flex justify-between gap-4"><b>Smash</b><span className="text-muted-foreground">Charge high ball</span></li>
+            <li className="flex justify-between gap-4"><b>Serve</b><span className="text-muted-foreground">Release</span></li>
+            {mode === 'online' && <li className="flex justify-between gap-4"><b>Emote</b><span className="text-muted-foreground">1 / 2 / 3 / 4</span></li>}
+            {!isCoarsePointer && <li className="flex justify-between gap-4"><b>Pause · back</b><span className="text-muted-foreground">Esc</span></li>}
           </ul>
+          <Separator />
           <PlayerSpeedSetting />
           <PerformanceSettings />
-          {started && mode !== 'online' && <button onClick={newGame}>RESTART&nbsp;GAME</button>}
-          {started && <button onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>EXIT&nbsp;TO&nbsp;LOBBY</button>}
-          <button onClick={toggleMenu}>{started ? 'RESUME' : 'CLOSE'}</button>
+          <Separator />
+          {mode !== 'online' && <Button variant="outline" size="sm" onClick={newGame}>RESTART&nbsp;GAME</Button>}
+          <Button variant="outline" size="sm" onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>EXIT&nbsp;TO&nbsp;LOBBY</Button>
+          <Button size="sm" onClick={toggleMenu}>RESUME</Button>
         </div>
       )}
 
       {phase === 'over' && mode !== 'replay' && (
-        <div className={`over ${playerWon ? 'win' : 'lose'}`}>
-          <div className="over-kicker">{playerWon ? 'GAME · SET · MATCH' : 'MATCH OVER'}</div>
-          <div className="over-title">{playerWon ? 'YOU WIN' : `${opponentName} WINS`}</div>
-          <div className="over-score">
-            <div className="os-side"><span className="os-lbl">{youName}</span><span className="os-num os-you">{scoreP}</span></div>
-            <span className="os-sep">—</span>
-            <div className="os-side"><span className="os-lbl">{opponentName}</span><span className="os-num os-cpu">{scoreAI}</span></div>
+        <div className={cn('pointer-events-auto absolute inset-0 flex flex-col items-center justify-center bg-background/70 backdrop-blur-sm', !playerWon && 'bg-muted/80')}>
+          <div className={labelText}>{playerWon ? 'GAME · SET · MATCH' : 'MATCH OVER'}</div>
+          <div className="mt-4 text-7xl font-medium tracking-[0.1em]">{playerWon ? 'YOU WIN' : `${opponentName} WINS`}</div>
+          <div className="my-5 flex items-start gap-6">
+            <div className="flex flex-col items-center gap-1"><span className={labelText}>{youName}</span><span className="font-mono text-5xl">{scoreP}</span></div>
+            <span className="mt-6 text-2xl text-muted-foreground">—</span>
+            <div className="flex flex-col items-center gap-1"><span className={labelText}>{opponentName}</span><span className="font-mono text-5xl">{scoreAI}</span></div>
           </div>
-          <div className="over-flavor">{flavor}</div>
-          <div className="over-next">
-            <div className="over-card">
+          <div className="mb-8 text-xs italic tracking-[0.18em] text-muted-foreground">{flavor}</div>
+          <div className="flex flex-col items-center">
+            <div className={cn(glassPanel, 'grid w-[min(500px,90vw)] justify-items-center gap-4')}>
               {mode === 'online' ? (
                 <>
-                  <div className="over-pick">SAME PLAYER</div>
-                  <div className="over-rematch-copy">RUN IT BACK AGAINST {opponentName}</div>
+                  <div className={labelText}>SAME PLAYER</div>
+                  <div className="text-center text-sm font-medium tracking-[0.2em]">RUN IT BACK AGAINST {opponentName}</div>
                 </>
               ) : (
                 <>
-                  <div className="over-pick">NEXT OPPONENT</div>
+                  <div className={labelText}>NEXT OPPONENT</div>
                   <DifficultyButtons />
                 </>
               )}
             </div>
-            <div className="over-actions">
+            <div className="mt-5 flex items-center gap-3">
               {mode === 'online' ? (
-                <button className="rematch" onClick={() => networkGame.requestRematch()}>
+                <Button size="lg" onClick={() => networkGame.requestRematch()}>
                   {onlineRematchRequested ? 'WAITING · REVENGE' : `REVENGE · ${opponentName}`}
-                </button>
+                </Button>
               ) : (
-                <button className="rematch" onClick={newGame}>REMATCH&nbsp;·&nbsp;{botName}</button>
+                <Button size="lg" onClick={newGame}>REMATCH&nbsp;·&nbsp;{botName}</Button>
               )}
-              <button className="over-home" onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>↩&nbsp;&nbsp;HOME</button>
+              <Button variant="ghost" size="sm" onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>↩&nbsp;&nbsp;HOME</Button>
               {currentMatchId && (
-                <button className="over-home" onClick={() => replayGame.load(currentMatchId, authToken, onlineSide || 'p1').catch(() => {})}>
+                <Button variant="ghost" size="sm" onClick={() => replayGame.load(currentMatchId, authToken, onlineSide || 'p1').catch(() => {})}>
                   ▶&nbsp;&nbsp;WATCH&nbsp;REPLAY
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -781,6 +780,7 @@ export function Hud() {
 
 export function PointerCursor() {
   const ref = useRef(null);
+
   useEffect(() => {
     let raf = 0;
     const tick = () => {
@@ -788,8 +788,8 @@ export function PointerCursor() {
       if (node) {
         node.style.transform = `translate3d(${inputHud.cursorX}px, ${inputHud.cursorY}px, 0)`;
         node.style.opacity = inputHud.cursorVisible ? '1' : '0';
-        const charge = inputHud.charging ? inputHud.charge : 0;
-        node.style.setProperty('--pc-charge', charge.toFixed(3));
+        const charge = inputHud.charging ? Math.max(0, Math.min(1, inputHud.charge)) : 0;
+        node.style.setProperty('--cursor-accent-opacity', String(0.45 + charge * 0.25));
       }
       raf = requestAnimationFrame(tick);
     };
@@ -797,11 +797,14 @@ export function PointerCursor() {
     return () => cancelAnimationFrame(raf);
   }, []);
   return (
-    <div ref={ref} className="pointer-cursor" aria-hidden>
-      <span className="pc-glow" />
-      <span className="pc-ring" />
-      <span className="pc-core" />
-      <span className="pc-dot" />
+    <div
+      ref={ref}
+      className="pointer-events-none fixed left-0 top-0 z-[10000] size-0 opacity-0 transition-opacity duration-150"
+      aria-hidden
+      style={{ '--cursor-accent-opacity': 0.45 }}
+    >
+      <span className="absolute left-0 top-0 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/55 bg-background/20 shadow-[0_0_0_1px_rgba(255,255,255,0.42)]" />
+      <span className="absolute left-0 top-0 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary [opacity:var(--cursor-accent-opacity)]" />
     </div>
   );
 }
@@ -842,10 +845,10 @@ export function IntroOverlay() {
   if (removed) return null;
 
   return (
-    <div className={leaving ? 'intro intro-leave' : 'intro'}>
-      <div className="intro-title" aria-label="BACKSPIN">
+    <div className={cn('fixed inset-0 z-[9] flex items-center justify-center bg-background transition-opacity duration-1000', leaving && 'pointer-events-none opacity-0')}>
+      <div className="flex pl-[0.34em] text-[clamp(64px,10vw,150px)] font-semibold tracking-[0.34em] text-foreground" aria-label="BACKSPIN">
         {'BACKSPIN'.split('').map((letter, index) => (
-          <span key={index} style={{ animationDelay: `${0.25 + index * 0.09}s` }}>{letter}</span>
+          <span key={index} className="opacity-0 [animation:introGlyph_1s_cubic-bezier(.16,.7,.2,1)_forwards]" style={{ animationDelay: `${0.25 + index * 0.09}s` }}>{letter}</span>
         ))}
       </div>
     </div>

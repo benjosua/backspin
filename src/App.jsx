@@ -106,7 +106,7 @@ export default function App() {
 
   return (
     <DesktopOnlyGate>
-      <div className="app">
+      <div className="fixed inset-0 overflow-hidden bg-background">
       <Canvas
         flat
         shadows

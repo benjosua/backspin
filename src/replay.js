@@ -4,7 +4,10 @@ import { arenaFx, clampDt, damp, decayFx, resetFx } from './fx-state.js';
 import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
 
-const replayBaseUrl = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
+const replayDevBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
+  ? `${window.location.protocol}//${window.location.hostname}:2567`
+  : '';
+const replayBaseUrl = import.meta.env.VITE_COLYSEUS_URL || replayDevBackendUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
 const replayHttpBase = String(replayBaseUrl).replace(/^ws/i, 'http').replace(/\/$/, '');
 const clamp = MathUtils.clamp;
 const minReplayPitch = -0.2;

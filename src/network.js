@@ -14,7 +14,10 @@ const SERVER_BALL_LEAD_MIN = 0.018;
 const SERVER_BALL_LEAD_MAX = 0.075;
 const SERVER_BALL_STEP = 1 / 120;
 const PADDLE_Y = 0.62;
-const url = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
+const devBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
+  ? `${window.location.protocol}//${window.location.hostname}:2567`
+  : '';
+const url = import.meta.env.VITE_COLYSEUS_URL || devBackendUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
 const client = new Client(url);
 const httpBase = String(url).replace(/^ws/i, 'http').replace(/\/$/, '');
 const browserNeedsPointerScale = (() => {

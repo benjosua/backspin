@@ -1,23 +1,55 @@
 services:
   backspin:
-    build: .
-    image: backspin:latest
+    image: node:22-alpine
+    working_dir: /app
+    command: >
+      sh -lc "
+      if [ ! -x node_modules/.bin/vite ]; then npm ci --no-audit --prefer-offline; fi;
+      if [ ! -x my-server/node_modules/.bin/tsx ]; then npm --prefix my-server ci --no-audit --prefer-offline; fi;
+      trap 'kill 0' INT TERM;
+      npm run dev &
+      npm --prefix my-server start &
+      wait -n
+      "
     ports:
+      - "5173:5173"
       - "2567:2567"
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 2567
-      CLIENT_DIST_DIR: /app/dist
+      VITE_COLYSEUS_URL: http://localhost:2567
       DATABASE_URL: postgres://backspin:backspin@postgres:5432/backspin
       AUTH_SALT: change-me-auth-salt
       JWT_SECRET: change-me-jwt-secret
       SESSION_SECRET: change-me-session-secret
+      NODE_OPTIONS: --max-old-space-size=256
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+    volumes:
+      - .:/app
+      - node-modules:/app/node_modules
+      - server-node-modules:/app/my-server/node_modules
+      - npm-cache:/root/.npm
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    init: true
+    mem_limit: 768m
+    cpus: 1.5
+
   postgres:
     image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=20
     environment:
       POSTGRES_USER: backspin
       POSTGRES_PASSWORD: backspin
@@ -29,6 +61,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 256m
+    cpus: 0.5
 
 volumes:
   postgres-data:
+  node-modules:
+  server-node-modules:
+  npm-cache:

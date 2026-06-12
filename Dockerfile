@@ -7,6 +7,7 @@ RUN npm ci
 
 FROM client-deps AS client-build
 COPY index.html ./
+COPY vite.config.js jsconfig.json ./
 COPY public ./public
 COPY shared ./shared
 COPY my-server/src/shared ./my-server/src/shared
