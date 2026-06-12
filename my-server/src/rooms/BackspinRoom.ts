@@ -1,15 +1,15 @@
 import { Room, Client } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
-import { TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveShot } from "../shared/backspin-core.js";
+import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveShot, stepPaddleX } from "../shared/backspin-core.js";
 
 const TABLE = CORE_TABLE;
 const PHYSICS = { ...CORE_PHYSICS, serveHeight: 0.95 };
 const PADDLE_Z = { p1: 4.8, p2: -4.8 } as const;
 const PADDLE_Y = 0.62;
 const REACH = 0.95;
-const PADDLE_SPEED = 12;
-const TICK = 1000 / 60;
-const PATCH_RATE = 1000 / 30;
+const TICK = NET.tickMs;
+const PATCH_RATE = NET.patchMs;
+const FIXED_DT = NET.tickMs / 1000;
 const ROOM_CODE_CHANNEL = "$backspin_private_codes";
 
 type Side = "p1" | "p2";
@@ -31,6 +31,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private bouncedReceiver = false;
   private pointTimer = 0;
   private firstServer: Side = Math.random() < 0.5 ? "p1" : "p2";
+  private accumulator = 0;
 
   async onCreate(options: any) {
     this.setState(new BackspinState());
@@ -44,7 +45,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.server = this.firstServer;
     this.setMetadata({ mode: this.state.mode, code: this.state.roomCode });
     this.setPatchRate(PATCH_RATE);
-    this.setSimulationInterval((dt) => this.update(dt / 1000), TICK);
+    this.setSimulationInterval((dt) => this.stepSimulation(dt / 1000), TICK);
 
     this.onMessage("input", (client, message) => this.handleInput(client, message));
     this.onMessage("charge", (client, message) => this.handleCharge(client, message));
@@ -190,7 +191,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.lastHitter = side;
     this.bouncedReceiver = false;
     this.state.phase = "exchange";
-    this.broadcast("fx", { type: "hit", side });
+    this.broadcast("fx", { type: "hit", side }, { afterNextPatch: true });
   }
 
   private hit(side: Side) {
@@ -224,7 +225,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.lastHitter = side;
     this.bouncedReceiver = false;
     if (side === "p1") this.state.p1Charge = 0; else this.state.p2Charge = 0;
-    this.broadcast("fx", { type: "hit", side, smash: shot.smash, intent: shot.intent });
+    this.broadcast("fx", { type: "hit", side, smash: shot.smash, intent: shot.intent }, { afterNextPatch: true });
   }
 
   private point(winner: Side, reason: string) {
@@ -236,21 +237,27 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.pointReason = reason;
     if (winner === "p1") this.state.scoreP1 += 1;
     else this.state.scoreP2 += 1;
-    this.broadcast("fx", { type: "point", winner, reason });
+    this.broadcast("fx", { type: "point", winner, reason }, { afterNextPatch: true });
     if (Math.max(this.state.scoreP1, this.state.scoreP2) >= 11 && Math.abs(this.state.scoreP1 - this.state.scoreP2) >= 2) {
       this.state.phase = "over";
       this.state.winner = winner;
     }
   }
 
-  private update(dtRaw: number) {
-    const dt = clamp(dtRaw, 0, 1 / 30);
+  private stepSimulation(dtRaw: number) {
+    this.accumulator += clamp(dtRaw, 0, 0.25);
+    while (this.accumulator >= FIXED_DT) {
+      this.accumulator -= FIXED_DT;
+      this.update(FIXED_DT);
+    }
+  }
+
+  private update(dt: number) {
     for (const [sessionId, input] of this.inputs) {
       const side = sessionId === this.state.p1 ? "p1" : sessionId === this.state.p2 ? "p2" : null;
       if (!side) continue;
       const current = side === "p1" ? this.state.p1X : this.state.p2X;
-      const vx = clamp((input.targetX - current) * 10 * input.speed, -PADDLE_SPEED * input.speed, PADDLE_SPEED * input.speed);
-      const next = clamp(current + vx * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+      const { x: next } = stepPaddleX(current, input.targetX, dt, input.speed);
       if (side === "p1") {
         this.state.p1X = next;
         this.state.p1Charge = input.charging ? clamp(this.state.p1Charge + dt * 0.95, 0, 1) : 0;
@@ -320,7 +327,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
         this.state.ballVx += this.state.spinSide * PHYSICS.curveScale;
         this.state.spinTop *= 0.55;
         this.state.spinSide *= 0.55;
-        this.broadcast("fx", { type: "bounce", x: this.state.ballX, z: this.state.ballZ });
+        this.broadcast("fx", { type: "bounce", x: this.state.ballX, z: this.state.ballZ }, { afterNextPatch: true });
         if (this.lastHitter && side === this.lastHitter) this.point(other(this.lastHitter), "FAULT");
         else if (this.bouncedReceiver && this.lastHitter) this.point(this.lastHitter, "WINNER");
         else this.bouncedReceiver = true;

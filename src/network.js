@@ -5,7 +5,7 @@ import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js
 import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
 import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
-import { predictBounceKick } from '../shared/backspin-core.js';
+import { NET, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
 const url = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
@@ -70,6 +70,8 @@ class NetworkGame {
     this.keys = { l: false, r: false };
     this.pointerLocked = false;
     this.lastSend = 0;
+    this.lastPing = 0;
+    this.rttMs = 66;
     this.leaving = false;
     this.ray = new Raycaster();
     this.plane = new Plane(new Vector3(0, 1, 0), -0.62);
@@ -193,9 +195,9 @@ class NetworkGame {
       roomCode: s.roomCode,
     });
 
-    this.targetPlayerX = localIsP1 ? s.p1X : -s.p2X;
-    this.targetAiX = localIsP1 ? -s.p2X : s.p1X;
     const flip = localIsP1 ? 1 : -1;
+    this.targetPlayerX = (localIsP1 ? s.p1X : s.p2X) * flip;
+    this.targetAiX = (localIsP1 ? s.p2X : s.p1X) * flip;
     this.targetBall.set(s.ballX * flip, s.ballY, s.ballZ * flip);
     this.targetVel.set(s.ballVx * flip, s.ballVy, s.ballVz * flip);
     this.lastPatchAt = performance.now();
@@ -291,24 +293,38 @@ class NetworkGame {
     this.pvy = damp(this.pvy, 0, 9, dt);
     this.kTop = damp(this.kTop, 0, 6, dt);
     const now = performance.now();
-    if (this.room && now - this.lastSend > 33) {
+    if (this.room && now - this.lastSend >= NET.inputSendMs) {
       this.lastSend = now;
-      const serverX = this.side === 'p2' ? -this.inputX : this.inputX;
-      const serverAimX = this.side === 'p2' ? -this.aimX : this.aimX;
+      const flip = this.side === 'p2' ? -1 : 1;
       const aimY = clamp(this.ndcY, -1, 1);
-      const payload = { x: serverX, y: aimY, aimX: serverAimX, aimDepth: this.aimDepth, vx: this.pvx, vy: this.pvy + this.kTop, speed: store.playerSpeed };
+      const payload = {
+        x: this.inputX * flip,
+        y: aimY,
+        aimX: this.aimX * flip,
+        aimDepth: this.aimDepth,
+        vx: this.pvx * flip,
+        vy: this.pvy + this.kTop,
+        speed: store.playerSpeed,
+      };
       this.room.send('input', payload);
     }
-    const paddleEase = 1 - Math.exp(-(39 * store.playerSpeed) * dt);
-    const ballEase = 1 - Math.exp(-22 * dt);
-    const predictedPlayerX = this.room ? this.inputX : this.targetPlayerX;
+    if (this.room && now - this.lastPing >= 1500 && typeof this.room.ping === 'function') {
+      this.lastPing = now;
+      this.room.ping((latency) => {
+        if (Number.isFinite(latency)) this.rttMs = this.rttMs * 0.75 + latency * 0.25;
+      });
+    }
+    const paddleEase = 1 - Math.exp(-(32 * store.playerSpeed) * dt);
+    const ballEase = 1 - Math.exp(-24 * dt);
     this.player.prevX = this.player.x;
     this.ai.prevX = this.ai.x;
-    this.player.x += (predictedPlayerX - this.player.x) * paddleEase;
+    const playerStep = stepPaddleX(this.player.x, this.room ? this.inputX : this.targetPlayerX, dt, store.playerSpeed);
+    this.player.x = playerStep.x;
     this.ai.x += (this.targetAiX - this.ai.x) * paddleEase;
-    this.player.vx = (this.player.x - this.player.prevX) / Math.max(dt, 0.0001);
+    this.player.vx = playerStep.vx;
     this.ai.vx = (this.ai.x - this.ai.prevX) / Math.max(dt, 0.0001);
-    const patchAge = Math.min(0.08, Math.max(0, (performance.now() - this.lastPatchAt) / 1000));
+    const maxExtrapolate = clamp((this.rttMs * 0.5) / 1000, 0.04, 0.1);
+    const patchAge = Math.min(maxExtrapolate, Math.max(0, (performance.now() - this.lastPatchAt) / 1000));
     this.renderTargetBall.copy(this.targetBall).addScaledVector(this.targetVel, patchAge);
     this.ball.lerp(this.renderTargetBall, ballEase);
     this.vel.lerp(this.targetVel, ballEase);

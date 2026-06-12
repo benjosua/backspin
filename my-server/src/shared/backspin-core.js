@@ -23,8 +23,30 @@ export const SHOT = {
   blockCharge: 0.12,
 };
 
+export const NET = {
+  tickMs: 1000 / 60,
+  patchMs: 1000 / 60,
+  inputSendMs: 1000 / 60,
+  paddleFollow: 10,
+  paddleSpeed: 19,
+  paddleInset: 0.5,
+};
+
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 export const sideDir = (side) => (side === 'player' || side === 'p1' ? -1 : 1);
+export const clampPaddleX = (x) => clamp(x, -TABLE.halfWidth - NET.paddleInset, TABLE.halfWidth + NET.paddleInset);
+
+export function stepPaddleX(current, target, dt, speed = 1) {
+  const safeSpeed = clamp(Number.isFinite(speed) ? speed : 1, 0.5, 1.6);
+  const targetX = clampPaddleX(Number.isFinite(target) ? target : 0);
+  const vx = clamp(
+    (targetX - current) * NET.paddleFollow * safeSpeed,
+    -NET.paddleSpeed * safeSpeed,
+    NET.paddleSpeed * safeSpeed,
+  );
+  const x = clampPaddleX(current + vx * Math.max(0, dt));
+  return { x, vx };
+}
 
 export function gradeContact(context) {
   const offset = Math.abs(context.offset || 0);
@@ -275,6 +297,9 @@ export function predictBounceKick(ball, velocity, spin) {
 }
 
 export const BackspinCore = {
+  NET,
+  clampPaddleX,
+  stepPaddleX,
   classifyShot,
   gradeContact,
   predictBounceKick,
