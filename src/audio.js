@@ -9,7 +9,6 @@ let dryGain;
 let reverb;
 let reverbGain;
 let noiseBuffer;
-let crowdGain = null;
 let masterVolume = 0.85;
 const PENTATONIC = [0, 2, 4, 7, 9];
 const ROOT = 196;
@@ -60,7 +59,6 @@ function setupGraph() {
   compressor.connect(masterGain).connect(audioContext.destination);
 
   noiseBuffer = makeNoiseBuffer(0.5);
-  startCrowdBed();
   audioReady = true;
 }
 
@@ -166,7 +164,6 @@ export function playHit(power = 0, noteStep = 0) {
     noise({ dur: 0.03, vol: 0.34, type: 'highpass', freq: 2600, q: 0.6, send: 0.1 });
     tone({ f: 140, f2: 50, dur: 0.32, attack: 0.002, vol: 0.36, send: 0.06 });
   }
-  pulseCrowd(0.4 + power * 0.6);
 }
 
 export function playBounce() {
@@ -198,43 +195,6 @@ export function playGameOver(playerWon) {
   if (!audioReady) return;
   if (playerWon) [0, 1, 2, 3, 5].forEach((step, i) => chord(noteFrequency(392, step), 0.12 + i * 0.11, 0.16));
   else [5, 3, 2, 0].forEach((step, i) => chord(noteFrequency(196, step), 0.12 + i * 0.16, 0.12, 0, true));
-}
-
-function startCrowdBed() {
-  const gain = audioContext.createGain();
-  gain.gain.value = 0;
-  const filter = audioContext.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.frequency.value = 640;
-  filter.Q.value = 0.4;
-  const lfo = audioContext.createOscillator();
-  lfo.frequency.value = 0.05;
-  const lfoGain = audioContext.createGain();
-  lfoGain.gain.value = 240;
-  lfo.connect(lfoGain).connect(filter.frequency);
-  lfo.start();
-  for (const [freq, detune] of [[49, -4], [73.5, 5], [98, 0], [147, 4]]) {
-    const osc = audioContext.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    osc.detune.value = detune;
-    const g = audioContext.createGain();
-    g.gain.value = freq < 60 ? 0.5 : 0.28;
-    osc.connect(g).connect(filter);
-    osc.start();
-  }
-  filter.connect(gain).connect(dryGain);
-  gain.gain.setTargetAtTime(0.028, now() + 0.4, 3);
-  crowdGain = gain;
-}
-
-function pulseCrowd(amount) {
-  if (!crowdGain) return;
-  const t = now();
-  const base = 0.028;
-  crowdGain.gain.cancelScheduledValues(t);
-  crowdGain.gain.setTargetAtTime(base + amount * 0.03, t, 0.04);
-  crowdGain.gain.setTargetAtTime(base, t + 0.14, 0.7);
 }
 
 let pointerBound = false;
