@@ -80,7 +80,6 @@ export function DifficultyButtons() {
   const difficulty = useGameStore((state) => state.difficulty);
   const mode = useGameStore((state) => state.mode);
   const networkStatus = useGameStore((state) => state.networkStatus);
-  const roomCode = useGameStore((state) => state.roomCode);
   const setDifficulty = useGameStore((state) => state.setDifficulty);
   return (
     <div className="seg">
@@ -153,7 +152,6 @@ export function ModePicker() {
   const revealed = useGameStore((state) => state.revealed);
   const networkStatus = useGameStore((state) => state.networkStatus);
   const networkError = useGameStore((state) => state.networkError);
-  const roomCode = useGameStore((state) => state.roomCode);
   const playerName = useGameStore((state) => state.playerName);
   const setPlayerName = useGameStore((state) => state.setPlayerName);
   const start = useGameStore((state) => state.start);
@@ -197,7 +195,7 @@ export function ModePicker() {
         <input value={code} onChange={(event) => updateCode(event.target.value)} placeholder="CODE" maxLength={5} />
       </div>
       {networkStatus === 'connecting' && <div className="mode-status">CONNECTING...</div>}
-      {networkStatus === 'waiting' && <div className="mode-status">SEARCHING... {roomCode}</div>}
+      {networkStatus === 'waiting' && <div className="mode-status">SEARCHING...</div>}
       {networkError && <div className="mode-error">{networkError}</div>}
     </div>
   );
@@ -220,7 +218,6 @@ export function Hud() {
   const difficulty = useGameStore((state) => state.difficulty);
   const mode = useGameStore((state) => state.mode);
   const networkStatus = useGameStore((state) => state.networkStatus);
-  const roomCode = useGameStore((state) => state.roomCode);
   const playerName = useGameStore((state) => state.playerName);
   const onlineOpponentName = useGameStore((state) => state.opponentName);
 
@@ -268,7 +265,6 @@ export function Hud() {
               <i className={server === 'ai' ? 'on cpu' : ''} />
             </div>
           </div>
-          {mode === 'online' && roomCode && <div className="room-code">ROOM&nbsp;{roomCode}</div>}
           {serveMessage && <div className="serve-msg">{serveMessage}</div>}
           {flashText && phase !== 'over' && (
             <div key={flashId} className="flash" style={{ color: flashColor, textShadow: `0 0 30px ${flashColor}55` }}>

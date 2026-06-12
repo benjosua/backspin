@@ -297,6 +297,7 @@ const wallH = 12.4;
 const wallCenterY = 4;
 const digitChars = '0123456789';
 const labelChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const roomCodeChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
 
 function boostedColor(target, color, boost) {
   target.set(color);
@@ -339,6 +340,20 @@ function positionLabelCoords(playerLabel, cpuLabel, config, y) {
   playerLabel.position.set(-config.scoreX, y, 0);
   cpuLabel.position.set(config.scoreX, y, 0);
 }
+function applyRoomCodeText(node, config) {
+  const color = node._fill || new Color();
+  node._fill = color;
+  node.color = boostedColor(color, config.roomCodeFill, config.roomCodeFillBoost);
+  node.outlineColor = config.roomCodeGlow;
+  node.fillOpacity = config.roomCodeFillOpacity;
+  node.outlineWidth = percent(config.roomCodeOutlineWidth);
+  node.outlineBlur = percent(config.roomCodeOutlineBlur);
+  node.outlineOpacity = config.roomCodeOutlineOpacity;
+  node.fontSize = config.roomCodeFontSize;
+  node.fontWeight = config.roomCodeFontWeight;
+  node.letterSpacing = config.roomCodeLetterSpacing;
+  node.sdfGlyphSize = config.roomCodeSdfSize;
+}
 
 export function WallScoreboard() {
   const started = useGameStore((state) => state.started);
@@ -348,6 +363,7 @@ export function WallScoreboard() {
   const winner = useGameStore((state) => state.winner);
   const difficulty = useGameStore((state) => state.difficulty);
   const mode = useGameStore((state) => state.mode);
+  const roomCode = useGameStore((state) => state.roomCode);
   const playerName = useGameStore((state) => state.playerName);
   const onlineOpponentName = useGameStore((state) => state.opponentName);
   const bot = useMemo(() => BOTS.find((item) => item.id === difficulty) ?? BOTS[1], [difficulty]);
@@ -357,6 +373,7 @@ export function WallScoreboard() {
   const cpuScore = useRef(null);
   const playerLabel = useRef(null);
   const cpuLabel = useRef(null);
+  const roomCodeText = useRef(null);
   const labelGroup = useRef(null);
   const anim = useRef({ score: 0, side: 0, win: 0, winFlash: 0, prevP: 0, prevAI: 0 });
   const lastServer = useRef(null);
@@ -365,8 +382,9 @@ export function WallScoreboard() {
     const config = TUNING.scoreboard;
     if (playerScore.current) applyScoreText(playerScore.current, config);
     if (cpuScore.current) applyScoreText(cpuScore.current, config);
+    if (roomCodeText.current) applyRoomCodeText(roomCodeText.current, config);
     lastServer.current = null;
-  }, [scoreP, scoreAI]);
+  }, [scoreP, scoreAI, roomCode]);
 
   useEffect(() => {
     const state = anim.current;
@@ -414,6 +432,8 @@ export function WallScoreboard() {
     const scoreZ = wallZ + config.scoreZOffset;
     const labelY = scoreY - config.scoreFontSize * 0.52 - config.labelPad - config.labelFontSize * 0.5;
     const labelZ = scoreZ + 0.012;
+    const roomCodeY = scoreY - config.scoreFontSize * 0.52 - config.roomCodePad - config.roomCodeFontSize * 0.5;
+    const roomCodeZ = scoreZ + 0.024;
     const { server } = useGameStore.getState();
     const breathe = 1 + Math.sin(getDebugTime(state.clock.elapsedTime) * 0.7) * config.breatheAmp + arenaFx.heat * config.breatheHeat;
     const playerPop = memory.side === 1 ? memory.score : 0;
@@ -426,6 +446,12 @@ export function WallScoreboard() {
     if (cpuScore.current) {
       cpuScore.current.position.set(config.scoreX, scoreY + cpuPop * config.popLift, scoreZ);
       cpuScore.current.scale.setScalar(breathe * (1 + cpuPop * config.popScale));
+    }
+    if (roomCodeText.current) {
+      const showRoomCode = mode === 'online' && !!roomCode;
+      roomCodeText.current.position.set(0, roomCodeY, roomCodeZ);
+      roomCodeText.current.scale.setScalar(breathe);
+      if (roomCodeText.current.visible !== showRoomCode) roomCodeText.current.visible = showRoomCode;
     }
     if (playerLabel.current && cpuLabel.current) {
       if (lastServer.current !== server) {
@@ -446,6 +472,10 @@ export function WallScoreboard() {
       </Text>
       <Text ref={cpuScore} font={MONTSERRAT_FONT_URL} renderOrder={4} anchorX="center" anchorY="middle" characters={digitChars} depthOffset={-4}>
         {String(scoreAI).padStart(2, '0')}
+        <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+      </Text>
+      <Text ref={roomCodeText} font={MONTSERRAT_FONT_URL} renderOrder={6} anchorX="center" anchorY="middle" characters={roomCodeChars} depthOffset={-6} visible={mode === 'online' && !!roomCode}>
+        {`ROOM ${roomCode}`}
         <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
       </Text>
       <group ref={labelGroup} position={[0, 0, 0]} renderOrder={5}>
