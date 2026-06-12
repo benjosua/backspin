@@ -289,6 +289,24 @@ describe("backspin room", () => {
     assert.strictEqual(data.profile.losses, 0);
   });
 
+  it("updates account name used by ranked profile and leaderboard", async () => {
+    const account = await register(colyseus, "rename@example.com", "OLDNAME");
+    const response = await fetch(`${serverHttp(colyseus)}/api/me/name`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "New Name!" }),
+    });
+    const data = await response.json();
+    const leaderboardResponse = await fetch(`${serverHttp(colyseus)}/api/leaderboard`);
+    const leaderboardData = await leaderboardResponse.json();
+    const entry = leaderboardData.leaderboard.find((row: any) => row.userId === account.user.id);
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(data.user.name, "NEWNAME");
+    assert.strictEqual(data.profile.name, "NEWNAME");
+    assert.strictEqual(entry.name, "NEWNAME");
+  });
+
   it("rejects ranked queue clients without auth", async () => {
     await assert.rejects(
       () => colyseus.sdk.joinOrCreate("ranked_queue", { rank: 9999 }),

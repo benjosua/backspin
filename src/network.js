@@ -58,6 +58,18 @@ async function refreshLeaderboard() {
   return leaderboard;
 }
 
+async function syncAccountName(name) {
+  if (!client.auth.token) return null;
+  const { user, profile } = await apiFetch('/api/me/name', {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+  useGameStore.getState().setAuth(user || null, client.auth.token);
+  useGameStore.getState().setRankedProfile(profile || null);
+  await refreshLeaderboard();
+  return user;
+}
+
 client.auth.onChange(({ user, token }) => {
   useGameStore.getState().setAuth(user || null, token || null);
   if (user) refreshRankedProfile().catch(() => useGameStore.getState().setRankedProfile(null));
@@ -167,6 +179,12 @@ class NetworkGame {
 
   async refreshLeaderboard() {
     return refreshLeaderboard();
+  }
+
+  async updateAccountName(name = playerName()) {
+    const user = await syncAccountName(name);
+    this.sendProfile();
+    return user;
   }
 
   async rankedMatch() {

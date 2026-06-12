@@ -36,6 +36,7 @@ export interface RankedStore {
   findUserByEmail(email: string): Promise<RankedUser | null>;
   findUserById(id: string): Promise<RankedUser | null>;
   createUser(email: string, password: string, name: string): Promise<RankedUser>;
+  updateUserName(userId: string, name: string): Promise<RankedUser>;
   getProfile(userId: string): Promise<RankedProfile>;
   leaderboard(limit: number): Promise<LeaderboardEntry[]>;
   recordMatch(input: MatchInput): Promise<{ recorded: boolean; p1Delta: number; p2Delta: number }>;
@@ -136,6 +137,18 @@ class PostgresRankedStore implements RankedStore {
     } finally {
       client.release();
     }
+  }
+
+  async updateUserName(userId: string, name: string) {
+    await this.init();
+    const current = await this.findUserById(userId);
+    if (!current) throw new Error("user_not_found");
+    const cleanName = normalizeName(name, current.email.split("@")[0]);
+    const result = await this.pool.query(
+      "UPDATE users SET name = $2 WHERE id = $1 RETURNING id, email, name, password",
+      [userId, cleanName],
+    );
+    return result.rows[0];
   }
 
   async getProfile(userId: string) {
@@ -239,6 +252,14 @@ class MemoryRankedStore implements RankedStore {
     this.users.set(user.id, user);
     this.usersByEmail.set(user.email, user.id);
     this.profiles.set(user.id, { userId: user.id, rating: DEFAULT_RATING, wins: 0, losses: 0, gamesPlayed: 0 });
+    return user;
+  }
+
+  async updateUserName(userId: string, name: string) {
+    const user = this.users.get(userId);
+    if (!user) throw new Error("user_not_found");
+    user.name = normalizeName(name, user.email.split("@")[0]);
+    this.users.set(user.id, user);
     return user;
   }
 

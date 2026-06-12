@@ -181,6 +181,13 @@ export function ModePicker() {
     networkGame.refreshLeaderboard().catch(() => {});
   }, []);
   useEffect(() => {
+    if (!authUser || authUser.name === playerName) return;
+    const timeout = setTimeout(() => {
+      networkGame.updateAccountName(playerName).catch(() => {});
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [authUser, playerName]);
+  useEffect(() => {
     if (code.length < 5) {
       joinAttemptedCode.current = '';
       return;

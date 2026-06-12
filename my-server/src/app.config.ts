@@ -47,6 +47,7 @@ const server = defineServer({
      * Read more: https://expressjs.com/en/starter/basic-routing.html
      */
     express: (app) => {
+        app.use(express.json());
         app.use(auth.prefix, auth.routes());
 
         app.get("/api/me/rank", auth.middleware(), async (req: any, res: any) => {
@@ -55,6 +56,16 @@ const server = defineServer({
                 res.json({ profile });
             } catch (error: any) {
                 res.status(401).json({ error: error?.message || "unauthorized" });
+            }
+        });
+
+        app.patch("/api/me/name", auth.middleware(), async (req: any, res: any) => {
+            try {
+                const user = await rankedStore.updateUserName(req.auth.id, req.body?.name);
+                const profile = await rankedStore.getProfile(req.auth.id);
+                res.json({ user: { id: user.id, email: user.email, name: user.name }, profile });
+            } catch (error: any) {
+                res.status(400).json({ error: error?.message || "name_update_failed" });
             }
         });
 
