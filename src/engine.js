@@ -6,10 +6,9 @@ import {
   CAMERA,
   COLORS,
   DEFAULT_DIFFICULTY,
-  DEFAULT_PADDLE,
   getBot,
-  getPaddle,
   PHYSICS,
+  PLAYER_PADDLE,
   TABLE,
 } from './constants.js';
 import { DEBUG_MODE, debugFlags, randomSide, useGameStore } from './store.js';
@@ -113,7 +112,7 @@ export class GameEngine {
     this.shake = 0;
     this.overT = 0;
     this.volley = 0;
-    this.paddle = getPaddle(DEFAULT_PADDLE);
+    this.paddle = PLAYER_PADDLE;
     this.reach = PHYSICS.serveHeight;
     this.tier = getBot(DEFAULT_DIFFICULTY);
     this.brain = makeBrain();
@@ -177,7 +176,7 @@ export class GameEngine {
     this.firstServer = randomSide();
     this.player.x = 0;
     this.ai.x = 0;
-    this.paddle = getPaddle(useGameStore.getState().paddle);
+    this.paddle = PLAYER_PADDLE;
     this.reach = PHYSICS.serveHeight * this.paddle.play.reach;
     this.tier = getBot(useGameStore.getState().difficulty);
     resetBrain(this.brain);

@@ -15,7 +15,7 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import { COLORS, CPU_PADDLE, getPaddle, PHYSICS, TABLE, TUNING } from '../constants.js';
+import { COLORS, CPU_PADDLE, PHYSICS, PLAYER_PADDLE, TABLE, TUNING } from '../constants.js';
 import { perfSettings } from '../performance.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { getDebugTime } from '../debug-tuning.js';
@@ -639,8 +639,6 @@ export function Actors() {
   const resetNonce = useGameStore((state) => state.resetNonce);
   const extraFx = useGameStore((state) => state.performancePrefs.extraFx);
   const mode = useGameStore((state) => state.mode);
-  const paddleId = useGameStore((state) => state.paddle);
-  const paddle = useMemo(() => getPaddle(paddleId), [paddleId]);
 
   useEffect(() => {
     const element = gl.domElement;
@@ -854,7 +852,7 @@ export function Actors() {
   return (
     <group>
       <group ref={visibleGroup} visible={DEBUG_MODE}>
-        <Paddle ref={player} paddle={paddle} />
+        <Paddle ref={player} paddle={PLAYER_PADDLE} />
         <Paddle ref={ai} paddle={CPU_PADDLE} />
         <BallGhosts ref={ballGhosts} enabled={extraFx} />
         <Ball ref={ball} extraFx={extraFx} />

@@ -1,6 +1,6 @@
 // Recovered Zustand store from production bundle.
 import { create } from 'zustand';
-import { COLORS, DEFAULT_DIFFICULTY, DEFAULT_PADDLE, PLAYER_SPEED } from './constants.js';
+import { COLORS, DEFAULT_DIFFICULTY, PLAYER_SPEED } from './constants.js';
 
 export const DEBUG_MODE =
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
@@ -82,7 +82,6 @@ export const useGameStore = create((set, get) => ({
   winner: null,
   menuOpen: false,
   difficulty: DEFAULT_DIFFICULTY,
-  paddle: DEFAULT_PADDLE,
   playerSpeed: readPlayerSpeed(),
   playerName: readPlayerName(),
   opponentName: 'OPPONENT',
@@ -137,9 +136,6 @@ export const useGameStore = create((set, get) => ({
     })),
 
   goHome: () => get().backToMenu(),
-
-  setPaddle: (paddle) =>
-    set((state) => ({ paddle, resetNonce: state.resetNonce + 1 })),
 
   setPlayerSpeed: (playerSpeed) => {
     const next = clampPlayerSpeed(Number(playerSpeed) || PLAYER_SPEED.default);

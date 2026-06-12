@@ -141,11 +141,5 @@ export const DEFAULT_DIFFICULTY = 'rookie';
 export const BOT_BY_ID = Object.fromEntries(BOTS.map((bot) => [bot.id, bot]));
 export const getBot = (id) => BOT_BY_ID[id] || BOT_BY_ID.rookie;
 
-export const PADDLES = [
-  { id: 'ember', name: 'BALANCED', tag: 'Reliable all-around play.', style: 0, colors: { core: '#d9665f', edge: '#c85f59', accent: '#ef8f87', soft: '#f3e7d2', handle: '#c98274', glowRGB: '217,102,95' }, stats: { power: 0.6, spin: 0.4, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } },
-];
-
-export const DEFAULT_PADDLE = 'ember';
-export const CPU_PADDLE = { id: 'house', name: 'HOUSE', tag: 'CPU', style: 0, colors: { core: '#e3a085', edge: '#de7a6d', accent: '#f3c3ad', soft: '#ead9cb', handle: '#c98274', glowRGB: '222,122,109' }, stats: { power: 0.6, spin: 0.6, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } };
-export const PADDLE_BY_ID = Object.fromEntries(PADDLES.map((paddle) => [paddle.id, paddle]));
-export const getPaddle = (id) => PADDLE_BY_ID[id] || PADDLE_BY_ID.ember;
+export const PLAYER_PADDLE = { id: 'player', name: 'PLAYER', tag: 'Player', style: 0, colors: { core: '#d9665f', edge: '#c85f59', accent: '#ef8f87', soft: '#f3e7d2', handle: '#c98274', glowRGB: '217,102,95' }, stats: { power: 0.6, spin: 0.4, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } };
+export const CPU_PADDLE = { id: 'cpu', name: 'CPU', tag: 'CPU', style: 0, colors: { core: '#e3a085', edge: '#de7a6d', accent: '#f3c3ad', soft: '#ead9cb', handle: '#c98274', glowRGB: '222,122,109' }, stats: { power: 0.6, spin: 0.6, control: 0.6, speed: 0.6 }, play: { follow: 1, reach: 1, power: 1, spin: 1, control: 1 } };
