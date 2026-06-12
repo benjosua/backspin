@@ -1,7 +1,9 @@
 import assert from "assert";
+import { Client } from "@colyseus/sdk";
 import { ColyseusTestServer, boot } from "@colyseus/testing";
 
 import appConfig from "../src/app.config.js";
+import { rankedStore } from "../src/ranked/store.js";
 import {
   CONTACT,
   NET,
@@ -13,16 +15,35 @@ import {
   stepPaddleX,
 } from "../src/shared/backspin-core.js";
 
-function waitFor(check: () => boolean, label: string, timeoutMs = 1000) {
+function waitFor(check: () => boolean | Promise<boolean>, label: string, timeoutMs = 1000) {
   const startedAt = Date.now();
   return new Promise<void>((resolve, reject) => {
-    const tick = () => {
-      if (check()) return resolve();
+    const tick = async () => {
+      if (await check()) return resolve();
       if (Date.now() - startedAt > timeoutMs) return reject(new Error(`timed out waiting for ${label}`));
       setTimeout(tick, 10);
     };
     tick();
   });
+}
+
+function serverHttp(colyseus: ColyseusTestServer<typeof appConfig>) {
+  return `http://127.0.0.1:${(colyseus.server as any).port}`;
+}
+
+function serverWs(colyseus: ColyseusTestServer<typeof appConfig>) {
+  return `ws://127.0.0.1:${(colyseus.server as any).port}`;
+}
+
+async function register(colyseus: ColyseusTestServer<typeof appConfig>, email: string, name: string) {
+  const response = await fetch(`${serverHttp(colyseus)}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "secret1", options: { name } }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "register failed");
+  return data as { user: { id: string; email: string; name: string }; token: string };
 }
 
 describe("backspin room", () => {
@@ -31,7 +52,10 @@ describe("backspin room", () => {
   before(async () => colyseus = await boot(appConfig));
   after(async () => colyseus.shutdown());
 
-  beforeEach(async () => await colyseus.cleanup());
+  beforeEach(async () => {
+    await colyseus.cleanup();
+    await rankedStore.resetForTests?.();
+  });
 
   it("lets a client connect to a public backspin room", async () => {
     const room = await colyseus.createRoom("backspin", { mode: "public" });
@@ -163,5 +187,122 @@ describe("backspin room", () => {
 
     assert.ok(state.spinSide < 0, `expected server spin to be negative after p2 local-right flip, got ${state.spinSide}`);
     assert.ok(-state.spinSide > 0, "p2 local view flips server spin back to positive/right");
+  });
+
+  it("registers account users and exposes initial rank", async () => {
+    const account = await register(colyseus, "ranked@example.com", "RALLY");
+    const response = await fetch(`${serverHttp(colyseus)}/api/me/rank`, {
+      headers: { Authorization: `Bearer ${account.token}` },
+    });
+    const data = await response.json();
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(account.user.name, "RALLY");
+    assert.strictEqual(data.profile.rating, 1200);
+    assert.strictEqual(data.profile.wins, 0);
+    assert.strictEqual(data.profile.losses, 0);
+  });
+
+  it("rejects ranked queue clients without auth", async () => {
+    await assert.rejects(
+      () => colyseus.sdk.joinOrCreate("ranked_queue", { rank: 9999 }),
+      /ranked_requires_sign_in|auth/i,
+    );
+  });
+
+  it("ignores client supplied rank in ranked queue", async () => {
+    const account = await register(colyseus, "fake-rank@example.com", "FAKE");
+    colyseus.sdk.auth.token = account.token;
+
+    const queue = await colyseus.sdk.joinOrCreate("ranked_queue", { rank: 9999 });
+    const room = colyseus.getRoomById<any>(queue.roomId);
+
+    await waitFor(() => room.clients[0]?.userData?.rank === 1200, "server-loaded queue rank");
+    assert.strictEqual(room.clients[0].userData.rank, 1200);
+    await queue.leave();
+  });
+
+  it("hands ranked queue players into a ranked backspin match", async () => {
+    const p1Account = await register(colyseus, "queue-p1@example.com", "QPONE");
+    const p2Account = await register(colyseus, "queue-p2@example.com", "QPTWO");
+    const sdk1 = new Client(serverWs(colyseus));
+    const sdk2 = new Client(serverWs(colyseus));
+    sdk1.auth.token = p1Account.token;
+    sdk2.auth.token = p2Account.token;
+    let match1: any = null;
+    let match2: any = null;
+
+    const q1 = await sdk1.joinOrCreate("ranked_queue", { rank: 9999 });
+    q1.onMessage("clients", () => {});
+    q1.onMessage("seat", async (reservation) => {
+      q1.send("confirm");
+      match1 = await sdk1.consumeSeatReservation(reservation);
+    });
+    const q2 = await sdk2.joinOrCreate("ranked_queue", { rank: 1 });
+    q2.onMessage("clients", () => {});
+    q2.onMessage("seat", async (reservation) => {
+      q2.send("confirm");
+      match2 = await sdk2.consumeSeatReservation(reservation);
+    });
+
+    await waitFor(() => Boolean(match1 && match2), "ranked seat reservation", 3000);
+    const matchRoom = colyseus.getRoomById<any>(match1.roomId);
+    assert.strictEqual(matchRoom.state.ranked, true);
+    assert.strictEqual(matchRoom.state.mode, "ranked");
+    await match1.leave();
+    await match2.leave();
+  });
+
+  it("records Elo once for completed ranked matches", async () => {
+    const p1Account = await register(colyseus, "p1@example.com", "PONE");
+    const p2Account = await register(colyseus, "p2@example.com", "PTWO");
+    const room = await colyseus.createRoom<any>("backspin", { ranked: true, mode: "ranked" });
+    const sdk1 = new Client(serverWs(colyseus));
+    const sdk2 = new Client(serverWs(colyseus));
+    sdk1.auth.token = p1Account.token;
+    sdk2.auth.token = p2Account.token;
+    const p1 = await sdk1.joinById(room.roomId, { ranked: true });
+    const p2 = await sdk2.joinById(room.roomId, { ranked: true });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+
+    await waitFor(() => room.clients.length === 2, "ranked players joined");
+    room.state.phase = "exchange";
+    room.state.scoreP1 = 10;
+    room.state.scoreP2 = 0;
+    room.point("p1", "WINNER");
+    room.point("p1", "WINNER");
+
+    await waitFor(async () => (await rankedStore.getProfile(p1Account.user.id)).gamesPlayed === 1, "ranked match persisted");
+    const p1Profile = await rankedStore.getProfile(p1Account.user.id);
+    const p2Profile = await rankedStore.getProfile(p2Account.user.id);
+
+    assert.strictEqual(p1Profile.rating, 1216);
+    assert.strictEqual(p2Profile.rating, 1184);
+    assert.strictEqual(p1Profile.wins, 1);
+    assert.strictEqual(p2Profile.losses, 1);
+    assert.strictEqual(p1Profile.gamesPlayed, 1);
+    await p1.leave();
+    await p2.leave();
+  });
+
+  it("does not record casual matches in ranked profiles", async () => {
+    const account = await register(colyseus, "casual@example.com", "CASUAL");
+    const room = await colyseus.createRoom<any>("backspin", { mode: "public" });
+    const p1 = await colyseus.connectTo(room, { name: "CASUAL" });
+    const p2 = await colyseus.connectTo(room, { name: "OTHER" });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+
+    await waitFor(() => room.clients.length === 2, "casual players joined");
+    room.state.phase = "exchange";
+    room.state.scoreP1 = 10;
+    room.point("p1", "WINNER");
+    const profile = await rankedStore.getProfile(account.user.id);
+
+    assert.strictEqual(profile.rating, 1200);
+    assert.strictEqual(profile.gamesPlayed, 0);
+    await p1.leave();
+    await p2.leave();
   });
 });

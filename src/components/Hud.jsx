@@ -153,16 +153,33 @@ export function ModePicker() {
   const networkStatus = useGameStore((state) => state.networkStatus);
   const networkError = useGameStore((state) => state.networkError);
   const playerName = useGameStore((state) => state.playerName);
+  const authUser = useGameStore((state) => state.authUser);
+  const rankedProfile = useGameStore((state) => state.rankedProfile);
+  const leaderboard = useGameStore((state) => state.leaderboard);
+  const rankedQueueCount = useGameStore((state) => state.rankedQueueCount);
   const setPlayerName = useGameStore((state) => state.setPlayerName);
+  const setNetworkStatus = useGameStore((state) => state.setNetworkStatus);
   const start = useGameStore((state) => state.start);
   const [code, setCode] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const joinAttemptedCode = useRef('');
   const run = async (fn) => {
     setBusy(true);
-    try { await fn(); } finally { setBusy(false); }
+    try {
+      setNetworkStatus(networkStatus === 'waiting' ? 'waiting' : 'idle');
+      await fn();
+    } catch (error) {
+      setNetworkStatus('disconnected', error?.message || 'Action failed');
+    } finally {
+      setBusy(false);
+    }
   };
   const updateCode = (value) => setCode(value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5));
+  useEffect(() => {
+    networkGame.refreshLeaderboard().catch(() => {});
+  }, []);
   useEffect(() => {
     if (code.length < 5) {
       joinAttemptedCode.current = '';
@@ -186,17 +203,51 @@ export function ModePicker() {
           aria-label="player name"
         />
       </div>
+      <div className="auth-box">
+        {authUser ? (
+          <>
+            <div className="auth-status">
+              <b>{authUser.name}</b>
+              <span>{rankedProfile ? `${rankedProfile.rating} ELO · ${rankedProfile.wins}-${rankedProfile.losses}` : 'RANK LOADING'}</span>
+            </div>
+            <button onClick={() => run(() => networkGame.signOut())} disabled={busy}>LOG OUT</button>
+          </>
+        ) : (
+          <>
+            <div className="mode-row auth-inputs">
+              <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="EMAIL" aria-label="email" />
+              <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="PASSWORD" type="password" aria-label="password" />
+            </div>
+            <div className="mode-row">
+              <button onClick={() => run(() => networkGame.signIn(email, password))} disabled={busy || !email || !password}>SIGN IN</button>
+              <button onClick={() => run(() => networkGame.register(email, password))} disabled={busy || !email || !password}>REGISTER</button>
+            </div>
+          </>
+        )}
+      </div>
       <div className="mode-row">
         <button onClick={start} disabled={busy}>OFFLINE</button>
         <button onClick={() => run(() => networkGame.quickMatch())} disabled={busy}>QUICK MATCH</button>
+        <button onClick={() => run(() => networkGame.rankedMatch())} disabled={busy || !authUser}>RANKED</button>
       </div>
       <div className="mode-row private">
         <button onClick={() => run(() => networkGame.createPrivate())} disabled={busy}>CREATE ROOM</button>
         <input value={code} onChange={(event) => updateCode(event.target.value)} placeholder="CODE" maxLength={5} />
       </div>
       {networkStatus === 'connecting' && <div className="mode-status">CONNECTING...</div>}
-      {networkStatus === 'waiting' && <div className="mode-status">SEARCHING...</div>}
+      {networkStatus === 'waiting' && <div className="mode-status">SEARCHING{rankedQueueCount ? ` · ${rankedQueueCount}/2` : ''}</div>}
       {networkError && <div className="mode-error">{networkError}</div>}
+      <div className="leaderboard">
+        <div className="leaderboard-title">LEADERBOARD</div>
+        {(leaderboard || []).slice(0, 5).map((entry) => (
+          <div className="leaderboard-row" key={entry.userId}>
+            <span>#{entry.rank}</span>
+            <b>{entry.name}</b>
+            <em>{entry.rating}</em>
+          </div>
+        ))}
+        {(!leaderboard || leaderboard.length === 0) && <div className="leaderboard-empty">NO RANKED MATCHES YET</div>}
+      </div>
     </div>
   );
 }

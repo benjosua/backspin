@@ -1,6 +1,8 @@
-import { Room, Client } from "colyseus";
+import { Room, Client, ServerError, ErrorCode } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
 import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveReachableShot, stepPaddleX } from "../shared/backspin-core.js";
+import { authUserFromToken, type AuthUser } from "../auth/config.js";
+import { rankedStore } from "../ranked/store.js";
 
 const TABLE = CORE_TABLE;
 const PHYSICS = { ...CORE_PHYSICS, serveHeight: 0.95 };
@@ -27,15 +29,25 @@ function nowSeconds() { return Date.now() / 1000; }
 export class BackspinRoom extends Room<{ state: BackspinState }> {
   maxClients = 2;
   private inputs = new Map<string, Input>();
+  private rankedUsers = new Map<Side, string>();
+  private rankedMatchRecorded = false;
   private lastHitter: Side | null = null;
   private bouncedReceiver = false;
   private pointTimer = 0;
   private firstServer: Side = Math.random() < 0.5 ? "p1" : "p2";
   private accumulator = 0;
 
+  static async onAuth(_token: string, options: any, context: any) {
+    if (!options?.ranked) return true;
+    const user = await authUserFromToken(context?.token);
+    if (!user) throw new ServerError(ErrorCode.AUTH_FAILED, "ranked_requires_sign_in");
+    return user;
+  }
+
   async onCreate(options: any) {
     this.setState(new BackspinState());
-    this.state.mode = options?.mode === "private" ? "private" : "public";
+    this.state.ranked = options?.ranked === true;
+    this.state.mode = this.state.ranked ? "ranked" : options?.mode === "private" ? "private" : "public";
     if (this.state.mode === "private") {
       this.state.roomCode = await this.generateRoomCode(options?.code);
       this.roomId = this.state.roomCode;
@@ -43,7 +55,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       this.state.roomCode = makeCode();
     }
     this.state.server = this.firstServer;
-    this.setMetadata({ mode: this.state.mode, code: this.state.roomCode });
+    this.setMetadata({ mode: this.state.mode, code: this.state.roomCode, ranked: this.state.ranked });
     this.setPatchRate(PATCH_RATE);
     this.setSimulationInterval((dt) => this.stepSimulation(dt / 1000), TICK);
 
@@ -64,11 +76,17 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     return code;
   }
 
-  onJoin(client: Client, options: any) {
+  onJoin(client: Client, options: any, auth?: AuthUser | true) {
     const side: Side = !this.state.p1 ? "p1" : "p2";
     if (side === "p1") this.state.p1 = client.sessionId;
     else this.state.p2 = client.sessionId;
     this.inputs.set(client.sessionId, { targetX: 0, targetY: 0, aimX: 0, aimDepth: 0.5, vx: 0, vy: 0, speed: 1, charging: false, chargeStartedAt: 0, lastInputAt: 0 });
+    if (this.state.ranked) {
+      const user = auth && auth !== true ? auth : null;
+      if (!user?.id) throw new ServerError(ErrorCode.AUTH_FAILED, "ranked_requires_sign_in");
+      this.rankedUsers.set(side, user.id);
+      options = { ...(options || {}), name: user.name };
+    }
     this.handleProfile(client, options || {});
     this.state.joined = this.clients.length;
     if (this.clients.length === 2) {
@@ -103,6 +121,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     if (this.state.phase !== "over" && leaver && this.clients.length > 0) {
       this.state.winner = other(leaver);
       this.state.phase = "over";
+      this.finishRankedMatch("forfeit");
     }
   }
 
@@ -242,7 +261,29 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     if (Math.max(this.state.scoreP1, this.state.scoreP2) >= 11 && Math.abs(this.state.scoreP1 - this.state.scoreP2) >= 2) {
       this.state.phase = "over";
       this.state.winner = winner;
+      this.finishRankedMatch("completed");
     }
+  }
+
+  private finishRankedMatch(endedReason: string) {
+    if (!this.state.ranked || this.rankedMatchRecorded || !this.state.winner) return;
+    const p1UserId = this.rankedUsers.get("p1");
+    const p2UserId = this.rankedUsers.get("p2");
+    const winnerUserId = this.rankedUsers.get(this.state.winner as Side);
+    if (!p1UserId || !p2UserId || !winnerUserId) return;
+    this.rankedMatchRecorded = true;
+    void rankedStore.recordMatch({
+      roomId: this.roomId,
+      p1UserId,
+      p2UserId,
+      p1Score: this.state.scoreP1,
+      p2Score: this.state.scoreP2,
+      winnerUserId,
+      endedReason,
+    }).catch((error) => {
+      this.rankedMatchRecorded = false;
+      console.error("failed to record ranked match", error);
+    });
   }
 
   private stepSimulation(dtRaw: number) {

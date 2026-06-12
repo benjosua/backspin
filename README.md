@@ -46,6 +46,7 @@ Public deployment notes:
 - Deploy with Dockerfile from repository root.
 - Expose port `2567`.
 - Set `NODE_ENV=production`.
+- Set `DATABASE_URL`, `AUTH_SALT`, `JWT_SECRET`, and `SESSION_SECRET` for ranked accounts/leaderboards.
 - Do not set `VITE_COLYSEUS_URL` for same-origin deploys; client uses current public origin.
 - Optional: set `ENABLE_MONITOR=true` only behind private auth/network controls.
 

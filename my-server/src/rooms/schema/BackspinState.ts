@@ -3,6 +3,7 @@ import { Schema, type } from "@colyseus/schema";
 export class BackspinState extends Schema {
   @type("string") roomCode = "";
   @type("string") mode = "public";
+  @type("boolean") ranked = false;
   @type("string") phase = "waiting";
   @type("string") server = "p1";
   @type("string") winner = "";

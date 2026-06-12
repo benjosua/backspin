@@ -93,6 +93,11 @@ export const useGameStore = create((set, get) => ({
   networkError: '',
   roomCode: '',
   onlineSide: null,
+  authUser: null,
+  authToken: null,
+  rankedProfile: null,
+  leaderboard: [],
+  rankedQueueCount: 0,
   debugRevision: 0,
 
   reveal: () => set({ revealed: true }),
@@ -205,6 +210,10 @@ export const useGameStore = create((set, get) => ({
 
   setNetworkStatus: (networkStatus, networkError = '') => set({ networkStatus, networkError }),
   setOnlineSide: (onlineSide, roomCode) => set({ onlineSide, roomCode }),
+  setAuth: (authUser, authToken) => set({ authUser, authToken }),
+  setRankedProfile: (rankedProfile) => set({ rankedProfile }),
+  setLeaderboard: (leaderboard) => set({ leaderboard }),
+  setRankedQueueCount: (rankedQueueCount) => set({ rankedQueueCount }),
   syncOnlineState: (next) => set((state) => ({ ...next, flashId: next.phase === 'point' && state.phase !== 'point' ? state.flashId + 1 : state.flashId })),
 
   bumpScore: (who) =>

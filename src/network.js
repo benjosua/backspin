@@ -16,6 +16,7 @@ const SERVER_BALL_STEP = 1 / 120;
 const PADDLE_Y = 0.62;
 const url = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
 const client = new Client(url);
+const httpBase = String(url).replace(/^ws/i, 'http').replace(/\/$/, '');
 const browserNeedsPointerScale = (() => {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent || '';
@@ -25,6 +26,44 @@ const browserNeedsPointerScale = (() => {
 })();
 const pointerScale = () => (browserNeedsPointerScale && window.devicePixelRatio) || 1;
 const playerName = () => useGameStore.getState().playerName || 'PLAYER';
+const authHeader = () => (client.auth.token ? { Authorization: `Bearer ${client.auth.token}` } : {});
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(`${httpBase}${path}`, {
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...authHeader(),
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error || 'Request failed');
+  return data;
+}
+
+async function refreshRankedProfile() {
+  if (!client.auth.token) {
+    useGameStore.getState().setRankedProfile(null);
+    return null;
+  }
+  const { profile } = await apiFetch('/api/me/rank');
+  useGameStore.getState().setRankedProfile(profile);
+  return profile;
+}
+
+async function refreshLeaderboard() {
+  const { leaderboard } = await apiFetch('/api/leaderboard?limit=50');
+  useGameStore.getState().setLeaderboard(leaderboard || []);
+  return leaderboard;
+}
+
+client.auth.onChange(({ user, token }) => {
+  useGameStore.getState().setAuth(user || null, token || null);
+  if (user) refreshRankedProfile().catch(() => useGameStore.getState().setRankedProfile(null));
+  else useGameStore.getState().setRankedProfile(null);
+  refreshLeaderboard().catch(() => {});
+});
 
 function makeRacket(who, z) {
   return { who, x: 0, y: 0.62, z, rotX: who === 'player' ? -0.22 : 0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: z, tell: 0 };
@@ -33,6 +72,7 @@ function makeRacket(who, z) {
 class NetworkGame {
   constructor() {
     this.room = null;
+    this.queueRoom = null;
     this.side = null;
     this.remoteState = null;
     this.ball = new Vector3(0, 0.34, 0);
@@ -108,6 +148,51 @@ class NetworkGame {
     return this.join(client.joinById(wanted, { name: playerName() }));
   }
 
+  async signIn(email, password) {
+    const result = await client.auth.signInWithEmailAndPassword(email, password);
+    await Promise.all([refreshRankedProfile(), refreshLeaderboard()]);
+    return result;
+  }
+
+  async register(email, password) {
+    const result = await client.auth.registerWithEmailAndPassword(email, password, { name: playerName() });
+    await Promise.all([refreshRankedProfile(), refreshLeaderboard()]);
+    return result;
+  }
+
+  async signOut() {
+    await client.auth.signOut();
+    useGameStore.getState().setRankedProfile(null);
+  }
+
+  async refreshLeaderboard() {
+    return refreshLeaderboard();
+  }
+
+  async rankedMatch() {
+    if (!client.auth.token) throw new Error('Sign in required for ranked');
+    await this.disconnect(false);
+    useGameStore.getState().setNetworkStatus('connecting');
+    const queue = await client.joinOrCreate('ranked_queue', { mode: 'ranked', name: playerName(), rank: 1 });
+    this.queueRoom = queue;
+    useGameStore.getState().setNetworkStatus('waiting');
+    queue.onMessage('clients', (count) => useGameStore.getState().setRankedQueueCount(count || 1));
+    queue.onMessage('seat', async (reservation) => {
+      try {
+        queue.send('confirm');
+        const match = await client.consumeSeatReservation(reservation);
+        this.queueRoom = null;
+        await this.join(Promise.resolve(match));
+      } catch (error) {
+        useGameStore.getState().setNetworkStatus('disconnected', error?.message || 'Ranked join failed');
+      }
+    });
+    queue.onLeave(() => {
+      if (this.queueRoom === queue) this.queueRoom = null;
+    });
+    return queue;
+  }
+
   async join(promise) {
     await this.disconnect(false);
     useGameStore.getState().setNetworkStatus('connecting');
@@ -158,6 +243,11 @@ class NetworkGame {
   }
 
   async disconnect(goHome = true) {
+    if (this.queueRoom) {
+      const queue = this.queueRoom;
+      this.queueRoom = null;
+      await queue.leave(true).catch(() => {});
+    }
     if (this.room) {
       const room = this.room;
       this.leaving = true;
