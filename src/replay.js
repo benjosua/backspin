@@ -144,6 +144,7 @@ class ReplayGame {
     this.cameraDrag = null;
     this.playerRef = null;
     this.viewerSide = 'p1';
+    this.lastReplayTimeUiAt = 0;
   }
 
   resetCamera() {
@@ -168,6 +169,7 @@ class ReplayGame {
       resetFx();
       resetInputHud();
       this.resetCamera();
+      this.lastReplayTimeUiAt = 0;
       useGameStore.getState().startReplayMode({
         match,
         stats: player.replay?.stats || null,
@@ -182,11 +184,19 @@ class ReplayGame {
     }
   }
 
-  seek(timeMs) {
+  syncReplayTime(force = false) {
+    if (!this.playerRef) return;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (!force && now - this.lastReplayTimeUiAt < 100 && this.playerRef.cursorMs < this.playerRef.durationMs) return;
+    this.lastReplayTimeUiAt = now;
+    useGameStore.getState().setReplayTime(this.playerRef.cursorMs);
+  }
+
+  seek(timeMs, syncUi = true) {
     if (!this.playerRef) return null;
     const frame = this.playerRef.seek(timeMs);
     if (frame) this.applyFrame(frame);
-    useGameStore.getState().setReplayTime(this.playerRef.cursorMs);
+    if (syncUi) this.syncReplayTime(true);
     return frame;
   }
 
@@ -194,7 +204,7 @@ class ReplayGame {
     const frame = this.playerRef?.jumpToPoint(seq);
     if (frame) {
       this.applyFrame(frame);
-      useGameStore.getState().setReplayTime(this.playerRef.cursorMs);
+      this.syncReplayTime(true);
     }
   }
 
@@ -202,7 +212,7 @@ class ReplayGame {
     const frame = this.playerRef?.jumpToShot(shotId);
     if (frame) {
       this.applyFrame(frame);
-      useGameStore.getState().setReplayTime(this.playerRef.cursorMs);
+      this.syncReplayTime(true);
     }
   }
 
@@ -307,8 +317,10 @@ class ReplayGame {
     if (store.mode !== 'replay' || !this.playerRef) return;
     if (store.replayPlaying) {
       const next = this.playerRef.cursorMs + dt * 1000 * store.replaySpeed;
-      this.seek(next);
-      if (next >= this.playerRef.durationMs) useGameStore.getState().setReplayPlaying(false);
+      const reachedEnd = next >= this.playerRef.durationMs;
+      this.seek(next, false);
+      this.syncReplayTime(reachedEnd);
+      if (reachedEnd) useGameStore.getState().setReplayPlaying(false);
     }
     for (const racket of [this.player, this.ai]) {
       const sign = racket.who === 'player' ? 1 : -1;

@@ -51,8 +51,9 @@ type FinishInput = {
   p2Score: number;
 };
 
-const n = (value: number) => Number((Number(value) || 0).toFixed(4));
-const elapsedMs = (startedAt: number) => Math.max(0, Math.round(Date.now() - startedAt));
+const n = (value: number) => Math.round((Number(value) || 0) * 10000) / 10000;
+const wallElapsedMs = (startedAt: number) => Math.max(0, Math.round(Date.now() - startedAt));
+const replayMs = (value: number) => Math.max(0, Math.round(Number(value) || 0));
 
 export class MatchReplayRecorder {
   private store: MatchStore;
@@ -87,13 +88,14 @@ export class MatchReplayRecorder {
     this.pointSeq = 0;
     this.finalized = false;
     const matchId = this.matchId;
-    this.enqueue(() => this.store.createMatch({ id: matchId, startedAt: new Date(this.startedAt), ...input }));
+    const startedAt = this.startedAt;
+    this.enqueue(() => this.store.createMatch({ id: matchId, startedAt: new Date(startedAt), ...input }));
     return matchId;
   }
 
-  recordFrame(state: BackspinState) {
+  recordFrame(state: BackspinState, timeMsInput = 0) {
     if (!this.active || !this.matchId) return;
-    const timeMs = elapsedMs(this.startedAt);
+    const timeMs = replayMs(timeMsInput);
     const frame: ReplayFrame = [
       timeMs,
       n(state.ballX), n(state.ballY), n(state.ballZ),
@@ -111,38 +113,37 @@ export class MatchReplayRecorder {
     if (this.frameChunk.length >= CHUNK_FRAME_LIMIT || (first && timeMs - first[0] >= CHUNK_MS_LIMIT)) this.flushChunk();
   }
 
-  recordShot(input: ShotRecordInput) {
+  recordShot(input: ShotRecordInput, timeMsInput = 0) {
     if (!this.active || !this.matchId) return null;
     this.shotSeq += 1;
-    const id = `${this.matchId}:shot:${this.shotSeq}`;
-    this.enqueue(() => this.store.addShot({
-      id,
-      matchId: this.matchId!,
-      seq: this.shotSeq,
-      timeMs: elapsedMs(this.startedAt),
-      ...input,
-    }));
+    const matchId = this.matchId;
+    const seq = this.shotSeq;
+    const timeMs = replayMs(timeMsInput);
+    const id = `${matchId}:shot:${seq}`;
+    const shot = { ...input, id, matchId, seq, timeMs };
+    this.enqueue(() => this.store.addShot(shot));
     return id;
   }
 
-  recordPoint(input: PointRecordInput) {
+  recordPoint(input: PointRecordInput, timeMsInput = 0) {
     if (!this.active || !this.matchId) return null;
     this.pointSeq += 1;
-    const id = `${this.matchId}:point:${this.pointSeq}`;
-    this.enqueue(() => this.store.addPoint({
-      id,
-      matchId: this.matchId!,
-      timeMs: elapsedMs(this.startedAt),
-      ...input,
-    }));
+    const matchId = this.matchId;
+    const seq = this.pointSeq;
+    const timeMs = replayMs(timeMsInput);
+    const id = `${matchId}:point:${seq}`;
+    const point = { ...input, id, matchId, timeMs };
+    this.enqueue(() => this.store.addPoint(point));
     return id;
   }
 
-  finalize(input: FinishInput) {
+  finalize(input: FinishInput, durationMsInput?: number) {
     if (!this.active || !this.matchId) return this.whenIdle();
     this.flushChunk();
     const matchId = this.matchId;
-    const durationMs = elapsedMs(this.startedAt);
+    const durationMs = durationMsInput === undefined ? wallElapsedMs(this.startedAt) : replayMs(durationMsInput);
+    const totalPoints = this.pointSeq;
+    const totalShots = this.shotSeq;
     this.finalized = true;
     this.enqueue(() => this.store.finishMatch({
       matchId,
@@ -152,8 +153,8 @@ export class MatchReplayRecorder {
       p1Score: input.p1Score,
       p2Score: input.p2Score,
       durationMs,
-      totalPoints: this.pointSeq,
-      totalShots: this.shotSeq,
+      totalPoints,
+      totalShots,
     }));
     return this.whenIdle();
   }
@@ -167,10 +168,11 @@ export class MatchReplayRecorder {
     const frames = this.frameChunk;
     const startMs = frames[0][0];
     const endMs = frames[frames.length - 1][0];
+    const matchId = this.matchId;
     const chunkIndex = this.chunkIndex;
     this.chunkIndex += 1;
     this.frameChunk = [];
-    this.enqueue(() => this.store.addReplayChunk({ matchId: this.matchId!, chunkIndex, startMs, endMs, frames }));
+    this.enqueue(() => this.store.addReplayChunk({ matchId, chunkIndex, startMs, endMs, frames }));
   }
 
   private enqueue(work: () => Promise<unknown>) {

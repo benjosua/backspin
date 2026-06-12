@@ -5,6 +5,7 @@ import { ColyseusTestServer, boot } from "@colyseus/testing";
 import appConfig from "../src/app.config.js";
 import { rankedStore } from "../src/ranked/store.js";
 import { matchStore } from "../src/matches/store.js";
+import { MatchReplayRecorder } from "../src/matches/MatchReplayRecorder.js";
 import {
   CONTACT,
   NET,
@@ -36,6 +37,64 @@ function serverHttp(colyseus: ColyseusTestServer<typeof appConfig>) {
 
 function serverWs(colyseus: ColyseusTestServer<typeof appConfig>) {
   return `ws://127.0.0.1:${(colyseus.server as any).port}`;
+}
+
+
+function makeReplayState(overrides: Record<string, any> = {}) {
+  return {
+    ballX: 1.23456,
+    ballY: 0.5,
+    ballZ: -2,
+    ballVx: 3,
+    ballVy: -4,
+    ballVz: 5,
+    spinTop: 0.1,
+    spinSide: -0.2,
+    p1X: 0.25,
+    p2X: -0.25,
+    p1Charge: 0.4,
+    p2Charge: 0.6,
+    scoreP1: 1,
+    scoreP2: 2,
+    phase: "exchange",
+    server: "p1",
+    exchange: 3,
+    ...overrides,
+  } as any;
+}
+
+function replayShot(overrides: Record<string, any> = {}) {
+  return {
+    hitter: "p1",
+    isServe: false,
+    pointSeq: 1,
+    exchange: 1,
+    contact: {},
+    outgoing: {},
+    charge: 0,
+    aimX: 0,
+    aimDepth: 0.5,
+    spinTop: 0,
+    spinSide: 0,
+    speed: 10,
+    intent: "drive",
+    smash: false,
+    ...overrides,
+  } as any;
+}
+
+function replayPoint(overrides: Record<string, any> = {}) {
+  return {
+    seq: 1,
+    winner: "p1",
+    reason: "WINNER",
+    server: "p1",
+    p1Score: 1,
+    p2Score: 0,
+    rallyLength: 1,
+    terminalBall: {},
+    ...overrides,
+  } as any;
 }
 
 async function register(colyseus: ColyseusTestServer<typeof appConfig>, email: string, name: string) {
@@ -599,6 +658,90 @@ describe("backspin room", () => {
     assert.strictEqual(p1Profile.gamesPlayed, 1);
     await p1.leave();
     await p2.leave();
+  });
+
+  it("keeps queued replay writes bound to their original match across rematches", async () => {
+    let releaseFirstCreate!: () => void;
+    let createCalls = 0;
+    const gate = new Promise<void>((resolve) => { releaseFirstCreate = resolve; });
+    const created: any[] = [];
+    const shots: any[] = [];
+    const points: any[] = [];
+    const chunks: any[] = [];
+    const finishes: any[] = [];
+    const store: any = {
+      async init() {},
+      async createMatch(input: any) {
+        createCalls += 1;
+        if (createCalls === 1) await gate;
+        created.push(input);
+        return { ...input, endedAt: null, endedReason: null, winner: null, p1Score: 0, p2Score: 0, durationMs: 0, totalPoints: 0, totalShots: 0 };
+      },
+      async finishMatch(input: any) { finishes.push(input); },
+      async addPoint(input: any) { points.push(input); },
+      async addShot(input: any) { shots.push(input); },
+      async addReplayChunk(input: any) { chunks.push(input); },
+      async getMatchDetails() { return null; },
+      async getReplay() { return null; },
+      async getShotReplay() { return null; },
+      async listMatchesForUser() { return []; },
+      async getUserStats() { throw new Error("unused"); },
+    };
+    const recorder = new MatchReplayRecorder(store);
+    const firstMatchId = recorder.start({ roomId: "race", matchSeq: 1, mode: "ranked", ranked: true, p1Name: "P1", p2Name: "P2" });
+    recorder.recordShot(replayShot(), 100);
+    recorder.recordPoint(replayPoint(), 120);
+    recorder.recordFrame(makeReplayState(), 140);
+    recorder.finalize({ endedReason: "completed", winner: "p1", p1Score: 11, p2Score: 9 }, 200);
+    const secondMatchId = recorder.start({ roomId: "race", matchSeq: 2, mode: "ranked", ranked: true, p1Name: "P1", p2Name: "P2" });
+    recorder.recordShot(replayShot({ pointSeq: 2 }), 10);
+
+    releaseFirstCreate();
+    await recorder.whenIdle();
+
+    assert.notStrictEqual(secondMatchId, firstMatchId);
+    assert.deepStrictEqual(created.map((match) => match.id), [firstMatchId, secondMatchId]);
+    assert.strictEqual(shots[0].matchId, firstMatchId);
+    assert.strictEqual(shots[0].seq, 1);
+    assert.strictEqual(shots[0].timeMs, 100);
+    assert.strictEqual(points[0].matchId, firstMatchId);
+    assert.strictEqual(points[0].timeMs, 120);
+    assert.strictEqual(chunks[0].matchId, firstMatchId);
+    assert.strictEqual(chunks[0].startMs, 140);
+    assert.strictEqual(chunks[0].frames[0][1], 1.2346);
+    assert.strictEqual(finishes[0].matchId, firstMatchId);
+    assert.strictEqual(finishes[0].durationMs, 200);
+    assert.strictEqual(finishes[0].totalPoints, 1);
+    assert.strictEqual(finishes[0].totalShots, 1);
+    assert.strictEqual(shots[1].matchId, secondMatchId);
+    assert.strictEqual(shots[1].timeMs, 10);
+  });
+
+  it("filters shot replay frames across multiple replay chunks", async () => {
+    const p1 = await register(colyseus, "chunk-p1@example.com", "CHUNK1");
+    const p2 = await register(colyseus, "chunk-p2@example.com", "CHUNK2");
+    const match = await matchStore.createMatch({
+      roomId: "chunk-room",
+      matchSeq: 1,
+      mode: "ranked",
+      ranked: true,
+      p1UserId: p1.user.id,
+      p2UserId: p2.user.id,
+      p1Name: "CHUNK1",
+      p2Name: "CHUNK2",
+    });
+    const shotId = `${match.id}:shot:1`;
+    await matchStore.addShot({ id: shotId, matchId: match.id, seq: 1, timeMs: 1000, pointSeq: 1, exchange: 1, hitter: "p1", isServe: false, contact: {}, outgoing: {}, charge: 0, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 10, intent: "drive", smash: false });
+    await matchStore.addShot({ id: `${match.id}:shot:2`, matchId: match.id, seq: 2, timeMs: 5000, pointSeq: 2, exchange: 1, hitter: "p2", isServe: false, contact: {}, outgoing: {}, charge: 0, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 10, intent: "drive", smash: false });
+    await matchStore.addPoint({ id: `${match.id}:point:1`, matchId: match.id, seq: 1, timeMs: 1300, winner: "p1", reason: "WINNER", server: "p1", p1Score: 1, p2Score: 0, rallyLength: 1, terminalBall: {} });
+    await matchStore.addReplayChunk({ matchId: match.id, chunkIndex: 0, startMs: 0, endMs: 100, frames: [[0], [100]] });
+    await matchStore.addReplayChunk({ matchId: match.id, chunkIndex: 1, startMs: 900, endMs: 1300, frames: [[900], [1000], [1300]] });
+    await matchStore.addReplayChunk({ matchId: match.id, chunkIndex: 2, startMs: 1400, endMs: 1600, frames: [[1400], [1600]] });
+    await matchStore.finishMatch({ matchId: match.id, endedReason: "completed", winner: "p1", p1Score: 11, p2Score: 8, durationMs: 1600, totalPoints: 1, totalShots: 2 });
+
+    const replay = await matchStore.getShotReplay(match.id, shotId);
+
+    assert.deepStrictEqual(replay?.frames.map((frame) => frame[0]), [900, 1000, 1300]);
   });
 
   it("records authoritative replay data and exposes match replay APIs", async () => {

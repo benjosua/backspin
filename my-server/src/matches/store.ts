@@ -353,6 +353,8 @@ class PostgresMatchStore implements MatchStore {
         total_shots integer NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS matches_room_idx ON matches(room_id, match_seq);
+      CREATE INDEX IF NOT EXISTS matches_p1_ended_idx ON matches(p1_user_id, ended_at DESC, started_at DESC) WHERE ended_at IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS matches_p2_ended_idx ON matches(p2_user_id, ended_at DESC, started_at DESC) WHERE ended_at IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS match_points (
         id text PRIMARY KEY,
@@ -400,6 +402,7 @@ class PostgresMatchStore implements MatchStore {
         data bytea NOT NULL,
         PRIMARY KEY (match_id, chunk_index)
       );
+      CREATE INDEX IF NOT EXISTS match_replay_chunks_time_idx ON match_replay_chunks(match_id, start_ms, end_ms);
     `);
   }
 
@@ -473,31 +476,74 @@ class PostgresMatchStore implements MatchStore {
     return { match: makeSummary(matchResult.rows[0]), stats: stats(points, shots), points, shots };
   }
 
-  async getReplay(matchId: string) {
-    const details = await this.getMatchDetails(matchId);
-    if (!details) return null;
-    const chunksResult = await this.pool.query("SELECT * FROM match_replay_chunks WHERE match_id = $1 ORDER BY chunk_index", [matchId]);
-    const chunks = chunksResult.rows.map((row) => ({
+  private decodeReplayChunks(rows: any[]) {
+    return rows.map((row) => ({
       matchId: row.match_id,
       chunkIndex: Number(row.chunk_index),
       startMs: Number(row.start_ms),
       endMs: Number(row.end_ms),
       frames: JSON.parse(gunzipSync(row.data).toString("utf8")) as ReplayFrame[],
     }));
-    return { ...details, chunks };
+  }
+
+  private async buildItemsFromRows(rows: any[], userId: string): Promise<UserStatsItem[]> {
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => row.id);
+    const [pointResult, shotResult] = await Promise.all([
+      this.pool.query("SELECT * FROM match_points WHERE match_id = ANY($1::text[]) ORDER BY match_id, seq", [ids]),
+      this.pool.query("SELECT * FROM match_shots WHERE match_id = ANY($1::text[]) ORDER BY match_id, seq", [ids]),
+    ]);
+    const pointsByMatch = new Map<string, MatchPoint[]>();
+    const shotsByMatch = new Map<string, MatchShot[]>();
+    for (const row of pointResult.rows) {
+      const point = makePoint(row);
+      const points = pointsByMatch.get(point.matchId) || [];
+      points.push(point);
+      pointsByMatch.set(point.matchId, points);
+    }
+    for (const row of shotResult.rows) {
+      const shot = makeShot(row);
+      const shots = shotsByMatch.get(shot.matchId) || [];
+      shots.push(shot);
+      shotsByMatch.set(shot.matchId, shots);
+    }
+    return rows.map((row) => {
+      const match = makeSummary(row);
+      const points = pointsByMatch.get(match.id) || [];
+      const shots = shotsByMatch.get(match.id) || [];
+      return {
+        match,
+        stats: stats(points, shots),
+        points,
+        shots,
+        viewerSide: match.p1UserId === userId ? "p1" as Side : "p2" as Side,
+        replayReady: Boolean(row.replay_ready),
+      };
+    });
+  }
+
+  async getReplay(matchId: string) {
+    const details = await this.getMatchDetails(matchId);
+    if (!details) return null;
+    const chunksResult = await this.pool.query("SELECT * FROM match_replay_chunks WHERE match_id = $1 ORDER BY chunk_index", [matchId]);
+    return { ...details, chunks: this.decodeReplayChunks(chunksResult.rows) };
   }
 
   async getShotReplay(matchId: string, shotId: string) {
-    const replay = await this.getReplay(matchId);
-    if (!replay) return null;
-    const shot = replay.shots.find((item) => item.id === shotId);
+    const details = await this.getMatchDetails(matchId);
+    if (!details) return null;
+    const shot = details.shots.find((item) => item.id === shotId);
     if (!shot) return null;
     const from = Math.max(0, shot.timeMs - 250);
-    const nextShot = replay.shots.find((item) => item.seq === shot.seq + 1);
-    const nextPoint = replay.points.find((item) => item.seq >= shot.pointSeq && item.timeMs > shot.timeMs);
+    const nextShot = details.shots.find((item) => item.seq === shot.seq + 1);
+    const nextPoint = details.points.find((item) => item.seq >= shot.pointSeq && item.timeMs > shot.timeMs);
     const until = Math.min(nextShot?.timeMs ?? Number.POSITIVE_INFINITY, nextPoint?.timeMs ?? Number.POSITIVE_INFINITY, shot.timeMs + 3000);
-    const frames = replay.chunks.flatMap((chunk) => chunk.frames).filter((frame) => frame[0] >= from && frame[0] <= until);
-    return { match: replay.match, shot, frames };
+    const chunksResult = await this.pool.query(
+      "SELECT * FROM match_replay_chunks WHERE match_id = $1 AND start_ms <= $2 AND end_ms >= $3 ORDER BY chunk_index",
+      [matchId, until, from],
+    );
+    const frames = this.decodeReplayChunks(chunksResult.rows).flatMap((chunk) => chunk.frames).filter((frame) => frame[0] >= from && frame[0] <= until);
+    return { match: details.match, shot, frames };
   }
 
   async listMatchesForUser(userId: string, limit: number, offset: number) {
@@ -514,39 +560,84 @@ class PostgresMatchStore implements MatchStore {
        LIMIT $2 OFFSET $3`,
       [userId, safeLimit, safeOffset],
     );
-    return Promise.all(result.rows.map(async (row) => {
-      const details = await this.getMatchDetails(row.id);
-      if (!details) return null;
-      return {
-        match: details.match,
-        stats: details.stats,
-        viewerSide: details.match.p1UserId === userId ? "p1" as Side : "p2" as Side,
-        replayReady: Boolean(row.replay_ready),
-      };
-    })).then((items) => items.filter(Boolean) as MatchListItem[]);
+    const items = await this.buildItemsFromRows(result.rows, userId);
+    return items.map(({ match, stats, viewerSide, replayReady }) => ({ match, stats, viewerSide, replayReady }));
   }
 
   async getUserStats(userId: string) {
     await this.init();
-    const result = await this.pool.query(
+    const totalsResult = await this.pool.query(
+      `WITH user_matches AS (
+        SELECT m.id, m.winner, CASE WHEN m.p1_user_id = $1 THEN 'p1' ELSE 'p2' END AS viewer_side
+        FROM matches m
+        WHERE m.ended_at IS NOT NULL AND (m.p1_user_id = $1 OR m.p2_user_id = $1)
+      ), match_totals AS (
+        SELECT
+          COUNT(*)::int AS matches,
+          COALESCE(SUM(CASE WHEN winner = viewer_side THEN 1 ELSE 0 END), 0)::int AS wins,
+          COALESCE(SUM(CASE WHEN winner = viewer_side THEN 0 ELSE 1 END), 0)::int AS losses
+        FROM user_matches
+      ), point_totals AS (
+        SELECT
+          COALESCE(SUM(CASE WHEN p.winner = um.viewer_side THEN 1 ELSE 0 END), 0)::int AS points_won,
+          COALESCE(SUM(CASE WHEN p.id IS NOT NULL AND p.winner <> um.viewer_side THEN 1 ELSE 0 END), 0)::int AS points_lost,
+          COALESCE(SUM(CASE WHEN p.winner = um.viewer_side AND p.reason = 'WINNER' THEN 1 ELSE 0 END), 0)::int AS winners,
+          COALESCE(SUM(CASE WHEN p.winner = um.viewer_side AND p.reason = 'WINNER' AND p.rally_length = 0 THEN 1 ELSE 0 END), 0)::int AS aces,
+          COALESCE(SUM(CASE WHEN p.reason = 'FAULT' AND p.winner = um.viewer_side THEN 1 ELSE 0 END), 0)::int AS faults_drawn,
+          COALESCE(SUM(CASE WHEN p.reason = 'FAULT' AND p.winner <> um.viewer_side THEN 1 ELSE 0 END), 0)::int AS faults_committed,
+          COALESCE(MAX(p.rally_length), 0)::int AS longest_rally,
+          COALESCE(SUM(p.rally_length), 0)::float AS rally_total,
+          COUNT(p.id)::int AS rally_count
+        FROM user_matches um LEFT JOIN match_points p ON p.match_id = um.id
+      ), shot_totals AS (
+        SELECT
+          COUNT(s.id)::int AS shots,
+          COALESCE(SUM(CASE WHEN s.smash THEN 1 ELSE 0 END), 0)::int AS smashes,
+          COALESCE(MAX(s.speed), 0)::float AS fastest_shot_speed,
+          COALESCE(SUM(s.speed), 0)::float AS shot_speed_total
+        FROM user_matches um LEFT JOIN match_shots s ON s.match_id = um.id AND s.hitter = um.viewer_side
+      )
+      SELECT * FROM match_totals, point_totals, shot_totals`,
+      [userId],
+    );
+    const row = totalsResult.rows[0];
+    const recentResult = await this.pool.query(
       `SELECT m.*, EXISTS (
          SELECT 1 FROM match_replay_chunks c WHERE c.match_id = m.id LIMIT 1
        ) AS replay_ready
        FROM matches m
        WHERE m.ended_at IS NOT NULL AND (m.p1_user_id = $1 OR m.p2_user_id = $1)
-       ORDER BY m.ended_at DESC, m.started_at DESC`,
+       ORDER BY m.ended_at DESC, m.started_at DESC
+       LIMIT 10`,
       [userId],
     );
-    const items = await Promise.all(result.rows.map(async (row) => {
-      const details = await this.getMatchDetails(row.id);
-      if (!details) return null;
-      return {
-        ...details,
-        viewerSide: details.match.p1UserId === userId ? "p1" as Side : "p2" as Side,
-        replayReady: Boolean(row.replay_ready),
-      };
-    }));
-    return buildUserStats(items.filter(Boolean) as UserStatsItem[]);
+    const recentMatches = (await this.buildItemsFromRows(recentResult.rows, userId)).map(({ match, stats, viewerSide, replayReady }) => ({ match, stats, viewerSide, replayReady }));
+    const matches = Number(row?.matches || 0);
+    const wins = Number(row?.wins || 0);
+    const pointsWon = Number(row?.points_won || 0);
+    const pointsLost = Number(row?.points_lost || 0);
+    const shots = Number(row?.shots || 0);
+    const rallyCount = Number(row?.rally_count || 0);
+    return {
+      matches,
+      wins,
+      losses: Number(row?.losses || 0),
+      winRate: roundRate(matches ? wins / matches : 0),
+      pointsWon,
+      pointsLost,
+      pointWinRate: roundRate((pointsWon + pointsLost) ? pointsWon / (pointsWon + pointsLost) : 0),
+      shots,
+      smashes: Number(row?.smashes || 0),
+      fastestShotSpeed: roundRate(Number(row?.fastest_shot_speed || 0)),
+      avgShotSpeed: roundRate(shots ? Number(row?.shot_speed_total || 0) / shots : 0),
+      aces: Number(row?.aces || 0),
+      winners: Number(row?.winners || 0),
+      faultsCommitted: Number(row?.faults_committed || 0),
+      faultsDrawn: Number(row?.faults_drawn || 0),
+      longestRally: Number(row?.longest_rally || 0),
+      avgRally: roundRate(rallyCount ? Number(row?.rally_total || 0) / rallyCount : 0),
+      recentMatches,
+    };
   }
 }
 

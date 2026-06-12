@@ -54,6 +54,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private botEnabled = false;
   private botDifficulty: BotDifficulty = "pro";
   private botServeTimer = 0;
+  private replayElapsedMs = 0;
   private replay = new MatchReplayRecorder();
 
   static async onAuth(_token: string, options: any, context: any) {
@@ -273,6 +274,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
 
   private ensureReplayStarted() {
     if (this.activePlayerCount() < 2 || this.replay.active) return;
+    this.replayElapsedMs = 0;
     const matchId = this.replay.start({
       roomId: this.roomId,
       matchSeq: this.matchSeq,
@@ -292,7 +294,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       winner: this.state.winner as Side | "",
       p1Score: this.state.scoreP1,
       p2Score: this.state.scoreP2,
-    });
+    }, this.replayElapsedMs);
   }
 
   private currentServer(): Side {
@@ -356,7 +358,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       speed: Math.hypot(v.x, v.y, v.z),
       intent: "serve",
       smash: false,
-    });
+    }, this.replayElapsedMs);
     this.lastHitter = side;
     this.bouncedReceiver = false;
     this.serveBounceCount = 0;
@@ -408,7 +410,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       speed: Math.hypot(v.x, v.y, v.z),
       intent: shot.intent,
       smash: shot.smash,
-    });
+    }, this.replayElapsedMs);
     this.lastHitter = side;
     this.bouncedReceiver = false;
     if (side === "p1") this.state.p1Charge = 0; else this.state.p2Charge = 0;
@@ -433,7 +435,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       p2Score: this.state.scoreP2,
       rallyLength: this.state.exchange,
       terminalBall: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ, vx: this.state.ballVx, vy: this.state.ballVy, vz: this.state.ballVz },
-    });
+    }, this.replayElapsedMs);
     this.broadcast("fx", { type: "point", winner, reason }, { afterNextPatch: true });
     if (Math.max(this.state.scoreP1, this.state.scoreP2) >= 11 && Math.abs(this.state.scoreP1 - this.state.scoreP2) >= 2) {
       this.state.phase = "over";
@@ -516,7 +518,8 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     while (this.accumulator >= FIXED_DT) {
       this.accumulator -= FIXED_DT;
       this.update(FIXED_DT);
-      this.replay.recordFrame(this.state);
+      this.replayElapsedMs += TICK;
+      this.replay.recordFrame(this.state, this.replayElapsedMs);
     }
   }
 
