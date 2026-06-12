@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { BOTS, COLORS, PLAYER_SPEED, TABLE } from '../constants.js';
 import { inputHud } from '../engine.js';
 import { networkGame } from '../network.js';
-import { RENDER_SCALES, useGameStore } from '../store.js';
+import { DEBUG_MODE, RENDER_SCALES, useGameStore } from '../store.js';
 
 const MATCH_TO = 11;
 const padScore = (value) => String(value).padStart(2, '0');
@@ -208,6 +208,7 @@ export function ModePicker() {
   const rankedProfile = useGameStore((state) => state.rankedProfile);
   const leaderboard = useGameStore((state) => state.leaderboard);
   const rankedQueueCount = useGameStore((state) => state.rankedQueueCount);
+  const difficulty = useGameStore((state) => state.difficulty);
   const setPlayerName = useGameStore((state) => state.setPlayerName);
   const setNetworkStatus = useGameStore((state) => state.setNetworkStatus);
   const start = useGameStore((state) => state.start);
@@ -247,6 +248,7 @@ export function ModePicker() {
     joinAttemptedCode.current = code;
     run(() => networkGame.joinPrivate(code));
   }, [code, busy]);
+  const showTestAi = import.meta.env.DEV || DEBUG_MODE;
   if (started || !revealed) return null;
   return (
     <div className="mode-picker" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
@@ -287,6 +289,7 @@ export function ModePicker() {
         <button onClick={start} disabled={busy}>OFFLINE</button>
         <button onClick={() => run(() => networkGame.quickMatch())} disabled={busy}>QUICK MATCH</button>
         <button onClick={() => run(() => networkGame.rankedMatch())} disabled={busy || !authUser}>RANKED</button>
+        {showTestAi && <button onClick={() => run(() => networkGame.testAiMatch(difficulty))} disabled={busy}>TEST AI ONLINE</button>}
       </div>
       <div className="mode-row private">
         <button onClick={() => run(() => networkGame.createPrivate())} disabled={busy}>CREATE ROOM</button>

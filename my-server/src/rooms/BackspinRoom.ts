@@ -3,6 +3,7 @@ import { BackspinState } from "./schema/BackspinState.js";
 import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, getEmote, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
 import { authUserFromToken, type AuthUser } from "../auth/config.js";
 import { rankedStore } from "../ranked/store.js";
+import { MatchReplayRecorder } from "../matches/MatchReplayRecorder.js";
 
 const TABLE = CORE_TABLE;
 const PHYSICS = { ...CORE_PHYSICS, serveHeight: 0.95 };
@@ -16,7 +17,16 @@ const ROOM_CODE_CHANNEL = "$backspin_private_codes";
 const EMOTE_COOLDOWN_MS = 800;
 
 type Side = "p1" | "p2";
+type BotDifficulty = "rookie" | "pro" | "master";
 type Input = { targetX: number; targetY: number; aimX: number; aimDepth: number; vx: number; vy: number; speed: number; charging: boolean; chargeStartedAt: number; lastInputAt: number };
+type BotConfig = { name: string; skill: number; paddleSpeed: number; error: number; spin: number; aggression: number; placement: number; serveSpin: number };
+
+const BOT_CONFIGS: Record<BotDifficulty, BotConfig> = {
+  rookie: { name: "ROOKIE", skill: 0.28, paddleSpeed: 7.6, error: 0.17, spin: 0.2, aggression: 0.14, placement: 0.22, serveSpin: 0.22 },
+  pro: { name: "PRO", skill: 0.68, paddleSpeed: 12.4, error: 0.055, spin: 0.68, aggression: 0.55, placement: 0.62, serveSpin: 0.78 },
+  master: { name: "MASTER", skill: 0.9, paddleSpeed: 15.5, error: 0.025, spin: 0.95, aggression: 0.82, placement: 0.85, serveSpin: 1 },
+};
+const BOT_SESSION_ID = "$bot";
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const other = (side: Side): Side => side === "p1" ? "p2" : "p1";
@@ -41,6 +51,10 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private pointTimer = 0;
   private firstServer: Side = Math.random() < 0.5 ? "p1" : "p2";
   private accumulator = 0;
+  private botEnabled = false;
+  private botDifficulty: BotDifficulty = "pro";
+  private botServeTimer = 0;
+  private replay = new MatchReplayRecorder();
 
   static async onAuth(_token: string, options: any, context: any) {
     if (!options?.ranked) return true;
@@ -52,7 +66,11 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   async onCreate(options: any) {
     this.setState(new BackspinState());
     this.state.ranked = options?.ranked === true;
-    this.state.mode = this.state.ranked ? "ranked" : options?.mode === "private" ? "private" : "public";
+    const requestedMode = String(options?.mode || "public");
+    this.botEnabled = !this.state.ranked && requestedMode === "bot";
+    this.botDifficulty = this.normalizeBotDifficulty(options?.botDifficulty);
+    if (this.botEnabled) this.maxClients = 1;
+    this.state.mode = this.state.ranked ? "ranked" : this.botEnabled ? "bot" : requestedMode === "private" ? "private" : "public";
     if (this.state.mode === "private") {
       this.state.roomCode = await this.generateRoomCode(options?.code);
       this.roomId = this.state.roomCode;
@@ -72,6 +90,22 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.onMessage("rematch", (client) => this.handleRematch(client));
   }
 
+  private normalizeBotDifficulty(value: any): BotDifficulty {
+    return value === "rookie" || value === "master" ? value : "pro";
+  }
+
+  private botConfig() {
+    return BOT_CONFIGS[this.botDifficulty] || BOT_CONFIGS.pro;
+  }
+
+  private activePlayerCount() {
+    return this.botEnabled && this.state.p1 ? 2 : this.clients.length;
+  }
+
+  private makeInput(): Input {
+    return { targetX: 0, targetY: 0, aimX: 0, aimDepth: 0.5, vx: 0, vy: 0, speed: 1, charging: false, chargeStartedAt: 0, lastInputAt: 0 };
+  }
+
   private async generateRoomCode(requested?: string) {
     const existing = await this.presence.smembers(ROOM_CODE_CHANNEL);
     let code = String(requested || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
@@ -87,7 +121,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const side: Side = !this.state.p1 ? "p1" : "p2";
     if (side === "p1") this.state.p1 = client.sessionId;
     else this.state.p2 = client.sessionId;
-    this.inputs.set(client.sessionId, { targetX: 0, targetY: 0, aimX: 0, aimDepth: 0.5, vx: 0, vy: 0, speed: 1, charging: false, chargeStartedAt: 0, lastInputAt: 0 });
+    this.inputs.set(client.sessionId, this.makeInput());
     if (this.state.ranked) {
       const user = auth && auth !== true ? auth : null;
       if (!user?.id) throw new ServerError(ErrorCode.AUTH_FAILED, "ranked_requires_sign_in");
@@ -95,8 +129,13 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       options = { ...(options || {}), name: user.name };
     }
     this.handleProfile(client, options || {});
-    this.state.joined = this.clients.length;
-    if (this.clients.length === 2) {
+    if (this.botEnabled) {
+      this.state.p2 = BOT_SESSION_ID;
+      this.state.p2Name = `AI ${this.botConfig().name}`;
+      this.inputs.set(BOT_SESSION_ID, this.makeInput());
+    }
+    this.state.joined = this.activePlayerCount();
+    if (this.activePlayerCount() === 2) {
       this.lock();
       this.resetServe();
     } else {
@@ -113,7 +152,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   }
 
   onReconnect(_client: Client) {
-    this.state.joined = this.clients.length;
+    this.state.joined = this.activePlayerCount();
   }
 
   onLeave(client: Client) {
@@ -124,17 +163,19 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     if (leaver === "p1") this.state.p1 = "";
     else if (leaver === "p2") this.state.p2 = "";
 
-    this.state.joined = this.clients.length;
+    this.state.joined = this.activePlayerCount();
     if (this.state.phase === "waiting") return;
 
     if (this.state.phase !== "over" && leaver && this.clients.length > 0) {
       this.state.winner = other(leaver);
       this.state.phase = "over";
+      this.finalizeReplay("forfeit");
       this.finishRankedMatch("forfeit");
     }
   }
 
   onDispose() {
+    if (this.replay.active) this.finalizeReplay("abandoned");
     if (this.state.mode === "private" && this.state.roomCode) {
       this.presence.srem(ROOM_CODE_CHANNEL, this.state.roomCode);
     }
@@ -192,10 +233,10 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
 
   private handleRematch(client: Client) {
     const side = this.sideOf(client);
-    if (!side || this.state.phase !== "over" || this.clients.length < 2) return;
+    if (!side || this.state.phase !== "over" || this.activePlayerCount() < 2) return;
     this.rematchRequests.add(side);
     this.broadcast("rematch", { requestedBy: side, count: this.rematchRequests.size });
-    if (this.rematchRequests.size >= 2) this.startRematch();
+    if (this.botEnabled || this.rematchRequests.size >= 2) this.startRematch();
   }
 
   private startRematch() {
@@ -230,6 +271,29 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.broadcast("rematch", { started: true });
   }
 
+  private ensureReplayStarted() {
+    if (this.activePlayerCount() < 2 || this.replay.active) return;
+    this.replay.start({
+      roomId: this.roomId,
+      matchSeq: this.matchSeq,
+      mode: this.state.mode,
+      ranked: this.state.ranked,
+      p1UserId: this.rankedUsers.get("p1") || null,
+      p2UserId: this.rankedUsers.get("p2") || null,
+      p1Name: this.state.p1Name,
+      p2Name: this.state.p2Name,
+    });
+  }
+
+  private finalizeReplay(endedReason: string) {
+    void this.replay.finalize({
+      endedReason,
+      winner: this.state.winner as Side | "",
+      p1Score: this.state.scoreP1,
+      p2Score: this.state.scoreP2,
+    });
+  }
+
   private currentServer(): Side {
     const total = this.state.scoreP1 + this.state.scoreP2;
     const bucket = this.state.scoreP1 >= 10 && this.state.scoreP2 >= 10 ? total : Math.floor(total / 2);
@@ -237,6 +301,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   }
 
   private resetServe() {
+    this.ensureReplayStarted();
     this.state.exchange = 0;
     this.lastHitter = null;
     this.bouncedReceiver = false;
@@ -245,7 +310,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.spinTop = 0; this.state.spinSide = 0;
     this.state.p1Charge = 0; this.state.p2Charge = 0;
     this.state.server = this.currentServer();
-    this.state.phase = this.clients.length < 2 ? "waiting" : "serve";
+    this.state.phase = this.activePlayerCount() < 2 ? "waiting" : "serve";
     const z = this.state.server === "p1" ? PADDLE_Z.p1 - 0.45 : PADDLE_Z.p2 + 0.45;
     const x = this.state.server === "p1" ? this.state.p1X : this.state.p2X;
     this.state.ballX = x; this.state.ballY = PADDLE_Y + 0.34; this.state.ballZ = z;
@@ -253,11 +318,15 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
 
   private handleServe(client: Client) {
     const side = this.sideOf(client);
-    if (!side || this.state.phase !== "serve" || this.state.server !== side || this.clients.length < 2) return;
+    if (side) this.serve(side);
+  }
+
+  private serve(side: Side) {
+    if (this.state.phase !== "serve" || this.state.server !== side || this.activePlayerCount() < 2) return;
     const zDir = side === "p1" ? -1 : 1;
     const x = side === "p1" ? this.state.p1X : this.state.p2X;
     const charge = side === "p1" ? this.state.p1Charge : this.state.p2Charge;
-    const input = this.inputs.get(client.sessionId);
+    const input = this.inputs.get(side === "p1" ? this.state.p1 : this.state.p2);
     this.state.ballX = x;
     this.state.ballY = PADDLE_Y + 0.34;
     this.state.ballZ = side === "p1" ? PADDLE_Z.p1 - 0.45 : PADDLE_Z.p2 + 0.45;
@@ -271,6 +340,22 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const v = shot.velocity;
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
     this.state.spinTop = shot.topSpin; this.state.spinSide = shot.sideSpin;
+    this.replay.recordShot({
+      hitter: side,
+      isServe: true,
+      pointSeq: this.state.pointSeq,
+      exchange: this.state.exchange,
+      contact: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ, paddleX: x },
+      outgoing: { vx: v.x, vy: v.y, vz: v.z },
+      charge,
+      aimX,
+      aimDepth,
+      spinTop: shot.topSpin,
+      spinSide: shot.sideSpin,
+      speed: Math.hypot(v.x, v.y, v.z),
+      intent: "serve",
+      smash: false,
+    });
     this.lastHitter = side;
     this.bouncedReceiver = false;
     this.serveBounceCount = 0;
@@ -282,13 +367,14 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const paddleX = side === "p1" ? this.state.p1X : this.state.p2X;
     const input = this.inputs.get(side === "p1" ? this.state.p1 : this.state.p2);
     const charge = side === "p1" ? this.state.p1Charge : this.state.p2Charge;
+    const incomingVelocity = { x: this.state.ballVx, y: this.state.ballVy, z: this.state.ballVz };
     const offset = clamp((this.state.ballX - paddleX) / REACH, -1, 1);
     this.state.exchange += 1;
     const shot = resolvePlayerShot(
       {
         side,
         ball: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ },
-        incomingVelocity: { x: this.state.ballVx, y: this.state.ballVy, z: this.state.ballVz },
+        incomingVelocity,
         offset,
         exchange: this.state.exchange,
       },
@@ -306,6 +392,22 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const v = shot.velocity;
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
     this.state.spinTop = shot.spin.top; this.state.spinSide = shot.spin.side;
+    this.replay.recordShot({
+      hitter: side,
+      isServe: false,
+      pointSeq: this.state.pointSeq,
+      exchange: this.state.exchange,
+      contact: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ, paddleX, offset, incomingVelocity },
+      outgoing: { vx: v.x, vy: v.y, vz: v.z },
+      charge,
+      aimX: input?.aimX || 0,
+      aimDepth: input?.aimDepth ?? 0.5,
+      spinTop: shot.spin.top,
+      spinSide: shot.spin.side,
+      speed: Math.hypot(v.x, v.y, v.z),
+      intent: shot.intent,
+      smash: shot.smash,
+    });
     this.lastHitter = side;
     this.bouncedReceiver = false;
     if (side === "p1") this.state.p1Charge = 0; else this.state.p2Charge = 0;
@@ -321,10 +423,21 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.pointReason = reason;
     if (winner === "p1") this.state.scoreP1 += 1;
     else this.state.scoreP2 += 1;
+    this.replay.recordPoint({
+      seq: this.state.pointSeq,
+      winner,
+      reason,
+      server: this.state.server as Side,
+      p1Score: this.state.scoreP1,
+      p2Score: this.state.scoreP2,
+      rallyLength: this.state.exchange,
+      terminalBall: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ, vx: this.state.ballVx, vy: this.state.ballVy, vz: this.state.ballVz },
+    });
     this.broadcast("fx", { type: "point", winner, reason }, { afterNextPatch: true });
     if (Math.max(this.state.scoreP1, this.state.scoreP2) >= 11 && Math.abs(this.state.scoreP1 - this.state.scoreP2) >= 2) {
       this.state.phase = "over";
       this.state.winner = winner;
+      this.finalizeReplay("completed");
       this.finishRankedMatch("completed");
     }
   }
@@ -338,6 +451,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.rankedMatchRecorded = true;
     void rankedStore.recordMatch({
       roomId: `${this.roomId}:${this.matchSeq}`,
+      matchId: this.replay.currentMatchId || undefined,
       p1UserId,
       p2UserId,
       p1Score: this.state.scoreP1,
@@ -350,15 +464,63 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     });
   }
 
+  private predictBotContactX() {
+    if (this.state.ballVz >= -0.01) return this.state.ballX * 0.35;
+    const t = (PADDLE_Z.p2 - this.state.ballZ) / this.state.ballVz;
+    if (!Number.isFinite(t) || t < 0 || t > 1.8) return this.state.ballX * 0.35;
+    return this.state.ballX + this.state.ballVx * t + this.state.spinSide * PHYSICS.magnus * 0.5 * t * t;
+  }
+
+  private updateBotInput(dt: number) {
+    if (!this.botEnabled) return;
+    const input = this.inputs.get(BOT_SESSION_ID);
+    if (!input) return;
+    const bot = this.botConfig();
+    input.speed = clamp(bot.paddleSpeed / NET.paddleSpeed, 0.5, 1.6);
+
+    if (this.state.phase === "serve" && this.state.server === "p2") {
+      this.botServeTimer += dt;
+      input.targetX = clamp(Math.sin((this.state.pointSeq + 1) * 1.7) * TABLE.halfWidth * 0.25, -TABLE.halfWidth, TABLE.halfWidth);
+      input.aimX = clamp(Math.sin((this.state.pointSeq + 2) * 1.31) * (0.2 + bot.placement * 0.45), -0.85, 0.85);
+      input.aimDepth = clamp(0.42 + bot.aggression * 0.28, 0.32, 0.86);
+      input.vx = clamp(input.aimX * 4 * bot.serveSpin, -8, 8);
+      input.vy = clamp(0.7 * bot.serveSpin, -8, 8);
+      if (!input.charging) input.chargeStartedAt = nowSeconds();
+      input.charging = true;
+      if (this.botServeTimer >= 0.45) {
+        this.botServeTimer = 0;
+        this.serve("p2");
+        input.charging = false;
+      }
+      return;
+    }
+
+    this.botServeTimer = 0;
+    const incoming = this.state.phase === "exchange" && this.state.ballVz < 0;
+    const rawTarget = incoming ? this.predictBotContactX() : this.state.ballX * 0.25;
+    const deterministicNoise = Math.sin((this.state.exchange + 1) * 2.17 + this.state.pointSeq * 0.73) * bot.error * TABLE.halfWidth;
+    const target = clamp(rawTarget * (0.45 + bot.skill * 0.55) + deterministicNoise, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    input.vx = clamp((target - this.state.p2X) * 3.2, -8, 8);
+    input.targetX = target;
+    input.aimX = clamp((-this.state.p1X / TABLE.halfWidth) * (0.25 + bot.placement * 0.65) + deterministicNoise * 0.08, -0.95, 0.95);
+    input.aimDepth = clamp(0.4 + bot.aggression * 0.35, 0.25, 0.92);
+    input.vy = clamp(bot.spin * 1.2, -8, 8);
+    const wantsCharge = incoming && Math.abs(this.state.ballZ - PADDLE_Z.p2) < 2.4 && bot.aggression > 0.45;
+    if (wantsCharge && !input.charging) input.chargeStartedAt = nowSeconds();
+    input.charging = wantsCharge;
+  }
+
   private stepSimulation(dtRaw: number) {
     this.accumulator += clamp(dtRaw, 0, 0.25);
     while (this.accumulator >= FIXED_DT) {
       this.accumulator -= FIXED_DT;
       this.update(FIXED_DT);
+      this.replay.recordFrame(this.state);
     }
   }
 
   private update(dt: number) {
+    this.updateBotInput(dt);
     for (const [sessionId, input] of this.inputs) {
       const side = sessionId === this.state.p1 ? "p1" : sessionId === this.state.p2 ? "p2" : null;
       if (!side) continue;

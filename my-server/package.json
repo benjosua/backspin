@@ -13,7 +13,7 @@
     "loadtest": "tsx loadtest/example.ts --room backspin --numClients 2",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "clean": "rimraf build",
-    "test": "mocha -r tsx test/**.test.ts --exit --timeout 15000",
+    "test": "mocha -r tsx \"test/**/*.test.ts\" --exit --timeout 15000",
     "start:prod": "node build/index.js"
   },
   "author": "",

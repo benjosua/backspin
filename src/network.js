@@ -158,6 +158,10 @@ class NetworkGame {
     return this.join(client.joinOrCreate('backspin', { mode: 'public', name: playerName() }));
   }
 
+  async testAiMatch(difficulty = 'pro') {
+    return this.join(client.create('backspin', { mode: 'bot', botDifficulty: difficulty, name: playerName() }));
+  }
+
   async createPrivate() {
     return this.join(client.create('backspin', { mode: 'private', name: playerName() }));
   }

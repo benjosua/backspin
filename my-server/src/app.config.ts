@@ -15,10 +15,39 @@ import path from "node:path";
  */
 import { BackspinRoom } from "./rooms/BackspinRoom.js";
 import { RankedQueueRoom } from "./rooms/RankedQueueRoom.js";
-import { configureAuth } from "./auth/config.js";
+import { authUserFromToken, configureAuth } from "./auth/config.js";
 import { rankedStore } from "./ranked/store.js";
+import { matchStore, type MatchSummary } from "./matches/store.js";
 
 configureAuth();
+
+async function optionalAuthUser(req: any) {
+    const header = String(req.headers?.authorization || "");
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!token) return null;
+    try {
+        return await authUserFromToken(token);
+    } catch {
+        return null;
+    }
+}
+
+function canReadMatch(match: MatchSummary, user: any) {
+    if (match.mode === "public" && !match.ranked) return true;
+    return Boolean(user?.id && (match.p1UserId === user.id || match.p2UserId === user.id));
+}
+
+async function sendMatchResource(req: any, res: any, load: () => Promise<any>) {
+    try {
+        const resource = await load();
+        if (!resource) return res.status(404).json({ error: "match_not_found" });
+        const user = await optionalAuthUser(req);
+        if (!canReadMatch(resource.match, user)) return res.status(403).json({ error: "match_forbidden" });
+        res.json(resource);
+    } catch (error: any) {
+        res.status(500).json({ error: error?.message || "match_lookup_failed" });
+    }
+}
 
 const server = defineServer({
     /**
@@ -72,6 +101,19 @@ const server = defineServer({
         app.get("/api/leaderboard", async (req, res) => {
             const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 50));
             res.json({ leaderboard: await rankedStore.leaderboard(limit) });
+        });
+
+
+        app.get("/api/matches/:matchId", async (req, res) => {
+            await sendMatchResource(req, res, () => matchStore.getMatchDetails(req.params.matchId));
+        });
+
+        app.get("/api/matches/:matchId/replay", async (req, res) => {
+            await sendMatchResource(req, res, () => matchStore.getReplay(req.params.matchId));
+        });
+
+        app.get("/api/matches/:matchId/shots/:shotId/replay", async (req, res) => {
+            await sendMatchResource(req, res, () => matchStore.getShotReplay(req.params.matchId, req.params.shotId));
         });
 
         app.get("/healthz", (req, res) => {

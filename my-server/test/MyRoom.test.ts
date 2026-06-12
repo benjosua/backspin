@@ -4,6 +4,7 @@ import { ColyseusTestServer, boot } from "@colyseus/testing";
 
 import appConfig from "../src/app.config.js";
 import { rankedStore } from "../src/ranked/store.js";
+import { matchStore } from "../src/matches/store.js";
 import {
   CONTACT,
   NET,
@@ -57,6 +58,7 @@ describe("backspin room", () => {
   beforeEach(async () => {
     await colyseus.cleanup();
     await rankedStore.resetForTests?.();
+    await matchStore.resetForTests?.();
   });
 
   it("lets a client connect to a public backspin room", async () => {
@@ -71,6 +73,104 @@ describe("backspin room", () => {
     assert.strictEqual(state.mode, "public");
     assert.strictEqual(state.joined, 1);
     assert.match(state.roomCode, /^[A-HJ-NP-Z2-9]{5}$/);
+  });
+
+  it("starts a bot online test room with one real client", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "bot", botDifficulty: "master" });
+    const client = await colyseus.connectTo(room, { name: "PLAYER" });
+    client.onMessage("fx", () => {});
+
+    await waitFor(() => client.state?.toJSON?.().joined === 2, "bot room joined");
+    const state = client.state.toJSON();
+
+    assert.strictEqual(room.maxClients, 1);
+    assert.strictEqual(state.mode, "bot");
+    assert.strictEqual(state.joined, 2);
+    assert.strictEqual(state.p1, client.sessionId);
+    assert.strictEqual(state.p2, "$bot");
+    assert.strictEqual(state.p2Name, "AI MASTER");
+    assert.notStrictEqual(state.phase, "waiting");
+    await client.leave();
+  });
+
+  it("auto-serves for the AI in bot online test rooms", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "bot", botDifficulty: "pro" });
+    const client = await colyseus.connectTo(room, { name: "PLAYER" });
+    client.onMessage("fx", () => {});
+
+    await waitFor(() => room.state.joined === 2, "bot room ready");
+    room.state.phase = "serve";
+    room.state.server = "p2";
+
+    await waitFor(() => client.state.toJSON().phase === "exchange", "bot auto serve", 1500);
+    assert.strictEqual(room.state.phase, "exchange");
+    assert.strictEqual(room.state.p2Charge, 0);
+    await client.leave();
+  });
+
+  it("moves the AI paddle toward incoming balls in bot online test rooms", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "bot", botDifficulty: "master" });
+    const client = await colyseus.connectTo(room, { name: "PLAYER" });
+    client.onMessage("fx", () => {});
+
+    await waitFor(() => room.state.joined === 2, "bot room ready");
+    room.state.phase = "exchange";
+    room.state.ballX = 2;
+    room.state.ballY = 1;
+    room.state.ballZ = 0;
+    room.state.ballVx = 0;
+    room.state.ballVy = 0;
+    room.state.ballVz = -4;
+
+    await waitFor(() => room.state.p2X > 0.1, "bot paddle movement", 1000);
+    assert.ok(room.state.p2X > 0.1);
+    await client.leave();
+  });
+
+  it("lets the AI return reachable shots in bot online test rooms", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "bot", botDifficulty: "pro" });
+    const client = await colyseus.connectTo(room, { name: "PLAYER" });
+    client.onMessage("fx", () => {});
+
+    await waitFor(() => room.state.joined === 2, "bot room ready");
+    room.state.phase = "exchange";
+    room.lastHitter = "p1";
+    room.bouncedReceiver = true;
+    room.state.exchange = 1;
+    room.state.p2X = 0;
+    room.state.ballX = 0;
+    room.state.ballY = 1;
+    room.state.ballZ = -4.7;
+    room.state.ballVx = 0;
+    room.state.ballVy = 0;
+    room.state.ballVz = -3;
+    room.update(0.05);
+
+    assert.strictEqual(room.lastHitter, "p2");
+    assert.ok(room.state.exchange >= 2);
+    assert.ok(room.state.ballVz > 0);
+    await client.leave();
+  });
+
+  it("starts a bot rematch after one human rematch request", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "bot", botDifficulty: "rookie" });
+    const client = await colyseus.connectTo(room, { name: "PLAYER" });
+    const rematches: any[] = [];
+    client.onMessage("fx", () => {});
+    client.onMessage("rematch", (message) => rematches.push(message));
+
+    await waitFor(() => room.state.joined === 2, "bot room ready");
+    room.state.phase = "exchange";
+    room.state.scoreP1 = 10;
+    room.point("p1", "WINNER");
+    await waitFor(() => client.state.toJSON().phase === "over", "bot match over");
+
+    client.send("rematch");
+    await waitFor(() => client.state.toJSON().phase === "serve", "bot rematch started");
+    assert.ok(rematches.some((message) => message.started === true));
+    assert.strictEqual(client.state.toJSON().scoreP1, 0);
+    assert.strictEqual(client.state.toJSON().scoreP2, 0);
+    await client.leave();
   });
 
   it("uses one shared 60hz paddle step for prediction and authority", () => {
@@ -487,6 +587,75 @@ describe("backspin room", () => {
     await p2.leave();
   });
 
+  it("records authoritative replay data and exposes match replay APIs", async () => {
+    const p1Account = await register(colyseus, "replay-p1@example.com", "REPLAY1");
+    const p2Account = await register(colyseus, "replay-p2@example.com", "REPLAY2");
+    const room = await colyseus.createRoom<any>("backspin", { ranked: true, mode: "ranked" });
+    const sdk1 = new Client(serverWs(colyseus));
+    const sdk2 = new Client(serverWs(colyseus));
+    sdk1.auth.token = p1Account.token;
+    sdk2.auth.token = p2Account.token;
+    const p1 = await sdk1.joinById(room.roomId, { ranked: true });
+    const p2 = await sdk2.joinById(room.roomId, { ranked: true });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+
+    await waitFor(() => room.clients.length === 2 && Boolean(room.replay.currentMatchId), "ranked replay started");
+    const matchId = room.replay.currentMatchId;
+    room.stepSimulation(1 / 60);
+    room.state.phase = "serve";
+    room.state.server = "p1";
+    p1.send("input", { x: 0, y: 0, aimX: 0.2, aimDepth: 0.6, vx: 1, vy: 0.5, speed: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    p1.send("serve");
+    await waitFor(() => room.state.phase === "exchange", "serve shot recorded");
+    room.stepSimulation(1 / 60);
+    room.state.scoreP1 = 10;
+    room.point("p1", "WINNER");
+
+    await waitFor(async () => {
+      const replay = await matchStore.getReplay(matchId);
+      return Boolean(replay?.match.endedAt && replay.shots.length >= 1 && replay.points.length === 1 && replay.chunks.length >= 1);
+    }, "persisted replay", 3000);
+
+    const replay = (await matchStore.getReplay(matchId))!;
+    const rankedMatches = await rankedStore.recordedMatchesForTests?.();
+    assert.strictEqual(replay.match.winner, "p1");
+    assert.strictEqual(replay.match.p1Score, 11);
+    assert.strictEqual(replay.stats.totalPoints, 1);
+    assert.ok(replay.stats.totalShots >= 1);
+    assert.strictEqual(replay.points[0].reason, "WINNER");
+    assert.ok(replay.chunks[0].frames.length >= 1);
+    assert.ok(replay.chunks[0].frames.every((frame, index, frames) => index === 0 || frame[0] >= frames[index - 1][0]));
+    assert.ok(rankedMatches?.some((match) => match.matchId === matchId), "ranked match should link to replay match");
+
+    const summaryResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
+    const summary = await summaryResponse.json();
+    assert.strictEqual(summaryResponse.status, 200);
+    assert.strictEqual(summary.match.id, matchId);
+    assert.strictEqual(summary.stats.totalPoints, 1);
+
+    const replayResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/replay`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
+    const replayBody = await replayResponse.json();
+    assert.strictEqual(replayResponse.status, 200);
+    assert.ok(replayBody.chunks[0].frames.length >= 1);
+
+    const shotId = replay.shots[0].id;
+    const shotResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/shots/${encodeURIComponent(shotId)}/replay`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
+    const shotBody = await shotResponse.json();
+    assert.strictEqual(shotResponse.status, 200);
+    assert.strictEqual(shotBody.shot.id, shotId);
+    assert.ok(shotBody.frames.length >= 1);
+
+    const unauthorizedResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}`);
+    assert.strictEqual(unauthorizedResponse.status, 403);
+    const missingResponse = await fetch(`${serverHttp(colyseus)}/api/matches/not-a-match`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
+    assert.strictEqual(missingResponse.status, 404);
+
+    await p1.leave();
+    await p2.leave();
+  });
+
   it("records each ranked rematch against the same player", async () => {
     const p1Account = await register(colyseus, "ranked-rematch-p1@example.com", "RPONE");
     const p2Account = await register(colyseus, "ranked-rematch-p2@example.com", "RPTWO");
@@ -507,15 +676,20 @@ describe("backspin room", () => {
     room.state.scoreP1 = 10;
     room.point("p1", "WINNER");
     await waitFor(async () => (await rankedStore.getProfile(p1Account.user.id)).gamesPlayed === 1, "first ranked match persisted");
+    const firstMatchId = room.replay.currentMatchId;
+    await waitFor(async () => Boolean((await matchStore.getMatchDetails(firstMatchId))?.match.endedAt), "first replay persisted");
 
     p1.send("rematch");
     p2.send("rematch");
     await waitFor(() => p1.state.toJSON().phase === "serve", "ranked rematch started");
+    const secondMatchId = room.replay.currentMatchId;
+    assert.notStrictEqual(secondMatchId, firstMatchId);
     room.state.phase = "exchange";
     room.state.scoreP2 = 10;
     room.point("p2", "WINNER");
 
     await waitFor(async () => (await rankedStore.getProfile(p1Account.user.id)).gamesPlayed === 2, "second ranked match persisted");
+    await waitFor(async () => Boolean((await matchStore.getMatchDetails(secondMatchId))?.match.endedAt), "second replay persisted");
     const p1Profile = await rankedStore.getProfile(p1Account.user.id);
     const p2Profile = await rankedStore.getProfile(p2Account.user.id);
 
@@ -525,6 +699,31 @@ describe("backspin room", () => {
     assert.strictEqual(p2Profile.losses, 1);
     await p1.leave();
     await p2.leave();
+  });
+
+  it("finalizes replay data when a ranked player forfeits", async () => {
+    const p1Account = await register(colyseus, "forfeit-p1@example.com", "FPONE");
+    const p2Account = await register(colyseus, "forfeit-p2@example.com", "FPTWO");
+    const room = await colyseus.createRoom<any>("backspin", { ranked: true, mode: "ranked" });
+    const sdk1 = new Client(serverWs(colyseus));
+    const sdk2 = new Client(serverWs(colyseus));
+    sdk1.auth.token = p1Account.token;
+    sdk2.auth.token = p2Account.token;
+    const p1 = await sdk1.joinById(room.roomId, { ranked: true });
+    const p2 = await sdk2.joinById(room.roomId, { ranked: true });
+    p1.onMessage("fx", () => {});
+    p2.onMessage("fx", () => {});
+
+    await waitFor(() => room.clients.length === 2 && Boolean(room.replay.currentMatchId), "ranked match started");
+    const matchId = room.replay.currentMatchId;
+    room.stepSimulation(1 / 60);
+    await p2.leave();
+
+    await waitFor(async () => (await matchStore.getMatchDetails(matchId))?.match.endedReason === "forfeit", "forfeit replay persisted");
+    const details = (await matchStore.getMatchDetails(matchId))!;
+    assert.strictEqual(details.match.winner, "p1");
+    assert.strictEqual(details.match.endedReason, "forfeit");
+    await p1.leave();
   });
 
   it("does not record casual matches in ranked profiles", async () => {

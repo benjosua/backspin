@@ -21,8 +21,11 @@ export type RankedProfile = {
 
 export type LeaderboardEntry = RankedProfile & { rank: number };
 
+export type RankedMatchRecord = { roomId: string; matchId: string | null; p1UserId: string; p2UserId: string; p1Score: number; p2Score: number; winnerUserId: string; endedReason: string };
+
 type MatchInput = {
   roomId: string;
+  matchId?: string | null;
   p1UserId: string;
   p2UserId: string;
   p1Score: number;
@@ -41,6 +44,7 @@ export interface RankedStore {
   leaderboard(limit: number): Promise<LeaderboardEntry[]>;
   recordMatch(input: MatchInput): Promise<{ recorded: boolean; p1Delta: number; p2Delta: number }>;
   resetForTests?(): Promise<void>;
+  recordedMatchesForTests?(): Promise<RankedMatchRecord[]>;
 }
 
 const normalizeEmail = (email: string) => String(email || "").trim().toLowerCase();
@@ -89,6 +93,7 @@ class PostgresRankedStore implements RankedStore {
       );
       CREATE TABLE IF NOT EXISTS ranked_matches (
         room_id text PRIMARY KEY,
+        match_id text NULL,
         p1_user_id text NOT NULL REFERENCES users(id),
         p2_user_id text NOT NULL REFERENCES users(id),
         p1_score integer NOT NULL,
@@ -101,6 +106,7 @@ class PostgresRankedStore implements RankedStore {
         ended_reason text NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE ranked_matches ADD COLUMN IF NOT EXISTS match_id text NULL;
     `);
   }
 
@@ -206,9 +212,9 @@ class PostgresRankedStore implements RankedStore {
         [input.p2UserId, p2Delta, p1Won ? 0 : 1, p1Won ? 1 : 0],
       );
       await client.query(
-        `INSERT INTO ranked_matches (room_id, p1_user_id, p2_user_id, p1_score, p2_score, winner_user_id, p1_rating_before, p2_rating_before, p1_delta, p2_delta, ended_reason)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [input.roomId, input.p1UserId, input.p2UserId, input.p1Score, input.p2Score, input.winnerUserId, p1Before, p2Before, p1Delta, p2Delta, input.endedReason],
+        `INSERT INTO ranked_matches (room_id, match_id, p1_user_id, p2_user_id, p1_score, p2_score, winner_user_id, p1_rating_before, p2_rating_before, p1_delta, p2_delta, ended_reason)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [input.roomId, input.matchId || null, input.p1UserId, input.p2UserId, input.p1Score, input.p2Score, input.winnerUserId, p1Before, p2Before, p1Delta, p2Delta, input.endedReason],
       );
       await client.query("COMMIT");
       return { recorded: true, p1Delta, p2Delta };
@@ -219,13 +225,19 @@ class PostgresRankedStore implements RankedStore {
       client.release();
     }
   }
+
+  async recordedMatchesForTests() {
+    await this.init();
+    const result = await this.pool.query("SELECT room_id, match_id, p1_user_id, p2_user_id, p1_score, p2_score, winner_user_id, ended_reason FROM ranked_matches ORDER BY created_at");
+    return result.rows.map((row) => ({ roomId: row.room_id, matchId: row.match_id ?? null, p1UserId: row.p1_user_id, p2UserId: row.p2_user_id, p1Score: Number(row.p1_score), p2Score: Number(row.p2_score), winnerUserId: row.winner_user_id, endedReason: row.ended_reason }));
+  }
 }
 
 class MemoryRankedStore implements RankedStore {
   private users = new Map<string, RankedUser>();
   private usersByEmail = new Map<string, string>();
   private profiles = new Map<string, Omit<RankedProfile, "email" | "name">>();
-  private matches = new Set<string>();
+  private matches = new Map<string, RankedMatchRecord>();
 
   async init() {}
 
@@ -281,7 +293,6 @@ class MemoryRankedStore implements RankedStore {
 
   async recordMatch(input: MatchInput) {
     if (this.matches.has(input.roomId)) return { recorded: false, p1Delta: 0, p2Delta: 0 };
-    this.matches.add(input.roomId);
     const p1 = await this.getProfile(input.p1UserId);
     const p2 = await this.getProfile(input.p2UserId);
     const p1Won = input.winnerUserId === input.p1UserId;
@@ -290,7 +301,12 @@ class MemoryRankedStore implements RankedStore {
     const p2Delta = p1Won ? elo.loserDelta : elo.winnerDelta;
     this.profiles.set(input.p1UserId, { userId: input.p1UserId, rating: p1.rating + p1Delta, wins: p1.wins + (p1Won ? 1 : 0), losses: p1.losses + (p1Won ? 0 : 1), gamesPlayed: p1.gamesPlayed + 1 });
     this.profiles.set(input.p2UserId, { userId: input.p2UserId, rating: p2.rating + p2Delta, wins: p2.wins + (p1Won ? 0 : 1), losses: p2.losses + (p1Won ? 1 : 0), gamesPlayed: p2.gamesPlayed + 1 });
+    this.matches.set(input.roomId, { roomId: input.roomId, matchId: input.matchId || null, p1UserId: input.p1UserId, p2UserId: input.p2UserId, p1Score: input.p1Score, p2Score: input.p2Score, winnerUserId: input.winnerUserId, endedReason: input.endedReason });
     return { recorded: true, p1Delta, p2Delta };
+  }
+
+  async recordedMatchesForTests() {
+    return [...this.matches.values()];
   }
 }
 
