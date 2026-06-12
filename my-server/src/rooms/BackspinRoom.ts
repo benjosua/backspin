@@ -1,6 +1,6 @@
 import { Room, Client } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
-import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveShot, stepPaddleX } from "../shared/backspin-core.js";
+import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, resolvePlayerShot, solveReachableShot, stepPaddleX } from "../shared/backspin-core.js";
 
 const TABLE = CORE_TABLE;
 const PHYSICS = { ...CORE_PHYSICS, serveHeight: 0.95 };
@@ -185,9 +185,10 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const aimDepth = input?.aimDepth ?? 0.5;
     const targetX = clamp(aimX * TABLE.halfWidth * 0.96 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.98, TABLE.halfWidth * 0.98);
     const targetZ = zDir * (0.08 + aimDepth * 0.88) * TABLE.halfLength;
-    const v = solveShot({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin);
+    const shot = solveReachableShot({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin, side);
+    const v = shot.velocity;
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
-    this.state.spinTop = top; this.state.spinSide = sideSpin;
+    this.state.spinTop = shot.topSpin; this.state.spinSide = shot.sideSpin;
     this.lastHitter = side;
     this.bouncedReceiver = false;
     this.state.phase = "exchange";

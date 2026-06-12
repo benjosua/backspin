@@ -32,9 +32,17 @@ export const NET = {
   paddleInset: 0.5,
 };
 
+export const CONTACT = {
+  reachX: 0.95,
+  minY: 0.05,
+  maxY: 3.4,
+  racketZ: 4.8,
+};
+
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 export const sideDir = (side) => (side === 'player' || side === 'p1' ? -1 : 1);
 export const clampPaddleX = (x) => clamp(x, -TABLE.halfWidth - NET.paddleInset, TABLE.halfWidth + NET.paddleInset);
+export const maxReachableContactX = () => TABLE.halfWidth + NET.paddleInset + CONTACT.reachX;
 
 export function stepPaddleX(current, target, dt, speed = 1) {
   const safeSpeed = clamp(Number.isFinite(speed) ? speed : 1, 0.5, 1.6);
@@ -121,6 +129,143 @@ export function solveSafeShot(ball, targetX, targetZ, flightTime, topSpin, sideS
     z = Math.sign(z || targetZ || 1) * Math.min(Math.abs(z), TABLE.halfLength * (0.68 - attempt * 0.035));
   }
   return solveShot(ball, 0, Math.sign(targetZ || 1) * TABLE.halfLength * 0.42, flightTime, topSpin * 0.55, sideSpin * 0.45);
+}
+
+export function simulateReceiverContact(ball, velocity, topSpin, sideSpin, shooterSide, maxTime = 3) {
+  let x = ball.x;
+  let y = ball.y;
+  let z = ball.z;
+  let vx = velocity.x;
+  let vy = velocity.y;
+  let vz = velocity.z;
+  let top = topSpin;
+  let side = sideSpin;
+  let elapsed = 0;
+  let bounced = false;
+  let bounce = null;
+  const dt = 1 / 240;
+  const zDir = sideDir(shooterSide);
+  const receiverZ = zDir * CONTACT.racketZ;
+
+  while (elapsed < maxTime) {
+    const prevX = x;
+    const prevY = y;
+    const prevZ = z;
+    vx += side * PHYSICS.magnus * dt;
+    vy -= (30 + top * 11) * dt;
+    x += vx * dt;
+    y += vy * dt;
+    z += vz * dt;
+    elapsed += dt;
+
+    if (Math.sign(prevZ) !== Math.sign(z)) {
+      const crossT = (0 - prevZ) / (z - prevZ || 0.000001);
+      const netY = prevY + (y - prevY) * crossT;
+      if (netY - TABLE.ballRadius * 0.4 <= TABLE.netHeight) {
+        return { ok: false, reason: 'net', bounce };
+      }
+    }
+
+    if (!bounced && vy < 0 && y <= TABLE.ballRadius) {
+      if (Math.abs(x) > TABLE.halfWidth || Math.abs(z) > TABLE.halfLength || Math.sign(z) !== zDir) {
+        return { ok: false, reason: 'out', bounce: { x, z, time: elapsed } };
+      }
+      bounce = { x, z, time: elapsed };
+      y = TABLE.ballRadius;
+      vy = Math.abs(vy) * TABLE.bounceRestitution * (1 - Math.max(top, 0) * 0.18);
+      const zSign = Math.sign(vz) || 1;
+      vz += zSign * top * PHYSICS.speedScale;
+      vx += side * PHYSICS.curveScale;
+      top *= 0.55;
+      side *= 0.55;
+      bounced = true;
+    }
+
+    if (bounced && (prevZ - receiverZ) * (z - receiverZ) <= 0 && (zDir < 0 ? vz < 0 : vz > 0)) {
+      const crossT = (receiverZ - prevZ) / (z - prevZ || 0.000001);
+      const contact = {
+        x: prevX + (x - prevX) * crossT,
+        y: prevY + (y - prevY) * crossT,
+        z: receiverZ,
+        time: elapsed,
+      };
+      const catchableHeight = contact.y >= CONTACT.minY && contact.y <= CONTACT.maxY;
+      const reachableX = Math.abs(contact.x) <= maxReachableContactX();
+      return {
+        ok: Boolean(catchableHeight && reachableX),
+        reason: catchableHeight ? (reachableX ? 'ok' : 'wide') : 'height',
+        bounce,
+        contact,
+        catchableHeight,
+        reachableX,
+      };
+    }
+
+    if (Math.abs(z) > 8 || Math.abs(x) > 6 || y < -1.6) {
+      return { ok: false, reason: 'escaped', bounce };
+    }
+  }
+
+  return { ok: false, reason: 'timeout', bounce };
+}
+
+export function solveReachableShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin, shooterSide) {
+  const targetScales = [1, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1, 0];
+  const spinScales = [1, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1, 0];
+  const candidates = targetScales
+    .flatMap((targetScale) => spinScales.map((spinScale) => ({
+      targetScale,
+      spinScale,
+      penalty: Math.abs(1 - targetScale) + Math.abs(1 - spinScale) * 1.5,
+    })))
+    .sort((a, b) => a.penalty - b.penalty);
+  let best = null;
+
+  for (const { targetScale, spinScale, penalty } of candidates) {
+    const nextTargetX = targetX * targetScale;
+    const nextSideSpin = sideSpin * spinScale;
+    const velocity = solveSafeShot(ball, nextTargetX, targetZ, flightTime, topSpin, nextSideSpin);
+    const contact = simulateReceiverContact(ball, velocity, topSpin, nextSideSpin, shooterSide);
+    const candidate = {
+      velocity,
+      targetX: nextTargetX,
+      sideSpin: nextSideSpin,
+      topSpin,
+      reachAdjusted: targetScale !== 1 || spinScale !== 1,
+      contact,
+      penalty,
+    };
+    if (contact.ok) return candidate;
+    if (contact.catchableHeight && (!best || penalty < best.penalty)) best = candidate;
+  }
+
+  const zDir = sideDir(shooterSide);
+  const fallbackZ = Math.sign(targetZ || zDir || 1) * Math.min(Math.abs(targetZ || TABLE.halfLength * 0.5), TABLE.halfLength * 0.68);
+  for (const topScale of [1, 0.7, 0.4, 0]) {
+    const nextTopSpin = topSpin * topScale;
+    const velocity = solveSafeShot(ball, 0, fallbackZ, Math.max(flightTime, 0.62), nextTopSpin, 0);
+    const contact = simulateReceiverContact(ball, velocity, nextTopSpin, 0, shooterSide);
+    if (contact.ok) {
+      return {
+        velocity,
+        targetX: 0,
+        sideSpin: 0,
+        topSpin: nextTopSpin,
+        reachAdjusted: true,
+        contact,
+      };
+    }
+  }
+
+  if (best?.velocity) return { ...best, reachAdjusted: true };
+  return {
+    velocity: solveSafeShot(ball, 0, fallbackZ, Math.max(flightTime, 0.62), topSpin * 0.4, 0),
+    targetX: 0,
+    sideSpin: 0,
+    topSpin: topSpin * 0.4,
+    reachAdjusted: true,
+    contact: null,
+  };
 }
 
 export function classifyShot(context, input) {
@@ -253,17 +398,18 @@ export function resolvePlayerShot(context, input, options = {}) {
     TABLE.halfWidth * 0.98,
   );
   const targetZ = zDir * depth * TABLE.halfLength;
-  const velocity = solveSafeShot(context.ball, targetX, targetZ, flightTime, topSpin, sideSpin);
+  const solved = solveReachableShot(context.ball, targetX, targetZ, flightTime, topSpin, sideSpin, context.side);
 
   return {
     intent,
-    velocity,
-    spin: { top: topSpin, side: sideSpin },
-    target: { x: targetX, z: targetZ },
+    velocity: solved.velocity,
+    spin: { top: solved.topSpin, side: solved.sideSpin },
+    target: { x: solved.targetX, z: targetZ },
     flightTime,
     timing,
     smash: intent === 'smash' || intent === 'counter',
-    tell: intent === 'smash' ? 'smash' : intent === 'lob' ? 'lob' : Math.abs(sideSpin) + Math.abs(topSpin) > 0.35 ? 'spin' : 'none',
+    tell: intent === 'smash' ? 'smash' : intent === 'lob' ? 'lob' : Math.abs(solved.sideSpin) + Math.abs(solved.topSpin) > 0.35 ? 'spin' : 'none',
+    reachAdjusted: solved.reachAdjusted,
   };
 }
 
@@ -297,14 +443,18 @@ export function predictBounceKick(ball, velocity, spin) {
 }
 
 export const BackspinCore = {
+  CONTACT,
   NET,
   clampPaddleX,
+  maxReachableContactX,
   stepPaddleX,
   classifyShot,
   gradeContact,
   predictBounceKick,
   resolvePlayerShot,
+  simulateReceiverContact,
   simulateFirstBounce,
+  solveReachableShot,
   solveSafeShot,
   solveShot,
 };

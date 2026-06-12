@@ -14,7 +14,7 @@ import {
 import { DEBUG_MODE, debugFlags, randomSide, useGameStore } from './store.js';
 import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js';
 import { initAudio, playBounce, playCharge, playHit, playMenu, playNet } from './audio.js';
-import { predictBounceKick, resolvePlayerShot, solveSafeShot, solveShot } from '../shared/backspin-core.js';
+import { predictBounceKick, resolvePlayerShot, simulateReceiverContact, solveReachableShot } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
 const rand = () => Math.random();
@@ -354,10 +354,14 @@ export class GameEngine {
       targetZ = clampBotDepth(bot, zDir, targetZ);
       flightTime = clamp(0.68 - bot.serveSpin * 0.14 - skill * 0.12, 0.46, 0.68);
     }
+    if (!isPlayer && this.tier.minDepth != null && topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
+    const served = solveReachableShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin, server);
+    topSpin = served.topSpin;
+    sideSpin = served.sideSpin;
+    targetX = served.targetX;
     this.spin.top = topSpin;
     this.spin.side = sideSpin;
-    if (!isPlayer && this.tier.minDepth != null && topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
-    this.vel.copy(isPlayer ? solveSafeShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin) : solveShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin));
+    this.vel.copy(served.velocity);
     this.lastHitter = server;
     this.bouncedReceiver = false;
     this.charge = 0;
@@ -495,15 +499,25 @@ export class GameEngine {
       if ((botControlled && attract ? this.attractBot : this.tier).minDepth != null && topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
     }
 
+    let solved;
+    if (isPlayer && !botControlled) {
+      solved = new Vector3(playerShot.velocity.x, playerShot.velocity.y, playerShot.velocity.z);
+    } else {
+      const reachable = solveReachableShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin, who);
+      topSpin = reachable.topSpin;
+      sideSpin = reachable.sideSpin;
+      targetX = reachable.targetX;
+      solved = new Vector3(reachable.velocity.x, reachable.velocity.y, reachable.velocity.z);
+    }
     this.spin.top = topSpin;
     this.spin.side = sideSpin;
-    const solved = isPlayer && !botControlled
-      ? new Vector3(playerShot.velocity.x, playerShot.velocity.y, playerShot.velocity.z)
-      : solveShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin);
     if (error > 0) {
+      const reachableVelocity = solved.clone();
       solved.x *= 1 + (rand() - 0.5) * 2 * error;
       solved.y *= 1 + (rand() - 0.5) * 2 * error;
       solved.z *= 1 + (rand() - 0.5) * 2 * error * 0.7;
+      const contact = simulateReceiverContact(ball, solved, topSpin, sideSpin, who);
+      if (contact.catchableHeight && !contact.reachableX) solved.copy(reachableVelocity);
     }
     this.vel.copy(solved);
     this.lastHitter = who;

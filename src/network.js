@@ -8,6 +8,12 @@ import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
 import { NET, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
+const SERVER_GRAVITY = 30;
+const SERVER_TOPSPIN_GRAVITY = 11;
+const SERVER_BALL_LEAD_MIN = 0.018;
+const SERVER_BALL_LEAD_MAX = 0.075;
+const SERVER_BALL_STEP = 1 / 120;
+const PADDLE_Y = 0.62;
 const url = import.meta.env.VITE_COLYSEUS_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
 const client = new Client(url);
 const browserNeedsPointerScale = (() => {
@@ -36,7 +42,9 @@ class NetworkGame {
     this.targetPlayerX = 0;
     this.targetAiX = 0;
     this.renderTargetBall = new Vector3(0, 0.34, 0);
+    this.predictedVel = new Vector3();
     this.lastPatchAt = 0;
+    this.patchIntervalMs = NET.patchMs;
     this.snapNext = true;
     this.lastPointSeq = 0;
     this.spin = { top: 0, side: 0 };
@@ -109,6 +117,9 @@ class NetworkGame {
       this.room = room;
       this.side = null;
       this.remoteState = room.state;
+      this.snapNext = true;
+      this.lastPatchAt = 0;
+      this.patchIntervalMs = NET.patchMs;
       resetFx();
       resetInputHud();
       useGameStore.getState().startOnline();
@@ -200,7 +211,12 @@ class NetworkGame {
     this.targetAiX = (localIsP1 ? s.p2X : s.p1X) * flip;
     this.targetBall.set(s.ballX * flip, s.ballY, s.ballZ * flip);
     this.targetVel.set(s.ballVx * flip, s.ballVy, s.ballVz * flip);
-    this.lastPatchAt = performance.now();
+    const patchNow = performance.now();
+    if (this.lastPatchAt > 0) {
+      const interval = clamp(patchNow - this.lastPatchAt, NET.patchMs * 0.5, NET.patchMs * 3);
+      this.patchIntervalMs = this.patchIntervalMs * 0.85 + interval * 0.15;
+    }
+    this.lastPatchAt = patchNow;
     if (this.snapNext) {
       this.player.x = this.targetPlayerX;
       this.ai.x = this.targetAiX;
@@ -272,6 +288,30 @@ class NetworkGame {
     if (event.code === 'Space' || event.code === 'Enter') this.onPointerUp();
   }
 
+  predictBall(ball, vel, seconds) {
+    let remaining = clamp(seconds, 0, SERVER_BALL_LEAD_MAX + 0.05);
+    while (remaining > 0) {
+      const step = Math.min(SERVER_BALL_STEP, remaining);
+      const prevY = ball.y;
+      vel.x += this.spin.side * PHYSICS.magnus * step;
+      vel.y -= (SERVER_GRAVITY + this.spin.top * SERVER_TOPSPIN_GRAVITY) * step;
+      ball.x += vel.x * step;
+      ball.y += vel.y * step;
+      ball.z += vel.z * step;
+      remaining -= step;
+
+      if (vel.y < 0 && prevY > TABLE.ballRadius && ball.y <= TABLE.ballRadius) {
+        if (Math.abs(ball.x) <= TABLE.halfWidth && Math.abs(ball.z) <= TABLE.halfLength) {
+          ball.y = TABLE.ballRadius;
+          vel.y = Math.abs(vel.y) * TABLE.bounceRestitution * (1 - Math.max(this.spin.top, 0) * 0.18);
+          const zSign = Math.sign(vel.z) || 1;
+          vel.z += zSign * this.spin.top * PHYSICS.speedScale;
+          vel.x += this.spin.side * PHYSICS.curveScale;
+        }
+      }
+    }
+  }
+
   update(dt, time, camera, effects) {
     dt = clampDt(dt);
     const store = useGameStore.getState();
@@ -315,7 +355,7 @@ class NetworkGame {
       });
     }
     const paddleEase = 1 - Math.exp(-(32 * store.playerSpeed) * dt);
-    const ballEase = 1 - Math.exp(-24 * dt);
+    const ballEase = 1 - Math.exp(-42 * dt);
     this.player.prevX = this.player.x;
     this.ai.prevX = this.ai.x;
     const playerStep = stepPaddleX(this.player.x, this.room ? this.inputX : this.targetPlayerX, dt, store.playerSpeed);
@@ -323,11 +363,20 @@ class NetworkGame {
     this.ai.x += (this.targetAiX - this.ai.x) * paddleEase;
     this.player.vx = playerStep.vx;
     this.ai.vx = (this.ai.x - this.ai.prevX) / Math.max(dt, 0.0001);
-    const maxExtrapolate = clamp((this.rttMs * 0.5) / 1000, 0.04, 0.1);
-    const patchAge = Math.min(maxExtrapolate, Math.max(0, (performance.now() - this.lastPatchAt) / 1000));
-    this.renderTargetBall.copy(this.targetBall).addScaledVector(this.targetVel, patchAge);
-    this.ball.lerp(this.renderTargetBall, ballEase);
-    this.vel.lerp(this.targetVel, ballEase);
+    this.renderTargetBall.copy(this.targetBall);
+    this.predictedVel.copy(this.targetVel);
+    if (store.phase === 'serve') {
+      const racket = store.server === 'player' ? this.player : this.ai;
+      this.renderTargetBall.set(racket.x, PADDLE_Y + 0.34, racket.baseZ + (racket.who === 'player' ? -0.45 : 0.45));
+      this.predictedVel.set(0, 0, 0);
+    } else if (store.phase === 'exchange') {
+      const sincePatch = Math.max(0, (performance.now() - this.lastPatchAt) / 1000);
+      const lead = clamp((this.patchIntervalMs + this.rttMs * 0.35) / 1000, SERVER_BALL_LEAD_MIN, SERVER_BALL_LEAD_MAX);
+      this.predictBall(this.renderTargetBall, this.predictedVel, sincePatch + lead);
+    }
+    if (this.ball.distanceToSquared(this.renderTargetBall) > 4) this.ball.copy(this.renderTargetBall);
+    else this.ball.lerp(this.renderTargetBall, ballEase);
+    this.vel.lerp(this.predictedVel, 1 - Math.exp(-48 * dt));
 
     inputHud.charge = this.charge;
     inputHud.charging = this.charging;
