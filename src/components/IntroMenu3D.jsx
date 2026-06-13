@@ -24,10 +24,10 @@ const titleTextZ = -16.4;
 const difficultyPosition = [0, 2.5, -2];
 const difficultyRotation = [lookRotation(2.5, -2), 0, 0];
 const difficultyGap = 1.95;
-const inDuration = 0.55;
-const outDuration = 0.26;
-const startDelay = 0.44;
-const revealLag = 1.1;
+const inDuration = 0.28;
+const outDuration = 0.16;
+const startDelay = 0.18;
+const revealLag = 0.15;
 
 function lookRotation(y, z) {
   const target = [0, 4.2, 12.3];
@@ -117,6 +117,8 @@ function DifficultyPicker({ stage, active, onPick }) {
   const scaleMemory = useRef([1, 1, 1]);
   const glowTexture = useMemo(() => makeGlowTexture('255,245,225'), []);
   const activeIndex = Math.max(0, BOTS.findIndex((bot) => bot.id === active));
+
+  useEffect(() => () => glowTexture.dispose(), [glowTexture]);
 
   useFrame((_, delta) => {
     const dt = clampDt(delta);

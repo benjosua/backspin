@@ -1,38 +1,14 @@
-// Recovered render-layer source from production bundle names:
-// jT WorldBackground, HT Lights, GT EnvironmentModel, IE ArenaRings, ZE TableModel.
+// Recovered render-layer source from production bundle names.
 
 import { useFrame, useThree } from '@react-three/fiber';
-import { Text, useGLTF } from '@react-three/drei';
+import { Text } from '@react-three/drei';
 import { useEffect, useMemo, useRef } from 'react';
-import { BackSide, Color, MeshBasicMaterial, ShaderMaterial } from 'three';
-import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { Color } from 'three';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
-import { useGameStore } from '../store.js';
+import { DEBUG_MODE, useGameStore } from '../store.js';
 import { MONTSERRAT_FONT_URL } from '../fonts.js';
 import { BOTS, TABLE, TUNING } from '../constants.js';
-import { skyFragmentShader, skyVertexShader } from '../shaders.js';
 import { getDebugTime } from '../debug-tuning.js';
-
-const ktx2Loader = new KTX2Loader().setTranscoderPath('/basis/');
-const environmentUrl = '/environment-baked.glb';
-
-function withKtx2(gl) {
-  return (loader) => {
-    ktx2Loader.detectSupport(gl);
-    loader.setKTX2Loader(ktx2Loader);
-  };
-}
-
-function cloneBasicScene(scene) {
-  const clone = scene.clone(true);
-  clone.traverse((node) => {
-    if (!node.isMesh) return;
-    node.material = new MeshBasicMaterial({ map: node.material?.map ?? null });
-    node.castShadow = false;
-    node.receiveShadow = false;
-  });
-  return clone;
-}
 
 export function WorldBackground() {
   const { scene } = useThree();
@@ -46,6 +22,7 @@ export function WorldBackground() {
   }, [scene]);
 
   useFrame(() => {
+    if (!DEBUG_MODE) return;
     scene.background?.set?.(TUNING.world.background);
     if (scene.fog) {
       scene.fog.color.set(TUNING.world.fog);
@@ -61,8 +38,8 @@ export function WorldBackground() {
   );
 }
 
-const warmKey = new Color('#ffb066');
-const pulseKey = new Color('#ffe7c0');
+const warmKey = new Color('#ffc58a');
+const pulseKey = new Color('#f8fbff');
 const tmpColor = new Color();
 
 export function Lights() {
@@ -93,13 +70,15 @@ export function Lights() {
   return (
     <>
       <ambientLight ref={ambient} intensity={TUNING.lighting.ambient} color={TUNING.lighting.ambColor} />
+      <hemisphereLight args={['#f8fbff', '#cdd8dc', 0.5]} />
+      <pointLight position={[0, 3.4, -5.8]} intensity={0.35} color="#e8f2ff" distance={12} decay={2.2} />
       <directionalLight
         ref={key}
-        position={[4.5, 7.5, 5.5]}
+        position={[4.8, 7.2, 5.2]}
         intensity={TUNING.lighting.key}
         color={TUNING.lighting.keyColor}
         castShadow
-        shadow-mapSize={[1024, 1024]}
+        shadow-mapSize={[512, 512]}
         shadow-camera-left={-7}
         shadow-camera-right={7}
         shadow-camera-top={8}
@@ -111,13 +90,6 @@ export function Lights() {
       />
     </>
   );
-}
-
-export function EnvironmentModel() {
-  const { gl } = useThree();
-  const gltf = useGLTF(environmentUrl, false, false, withKtx2(gl));
-  const scene = useMemo(() => cloneBasicScene(gltf.scene), [gltf.scene]);
-  return <primitive object={scene} />;
 }
 
 const floorY = -2.1;
@@ -211,7 +183,7 @@ export function ArenaRings() {
 }
 
 const tableGlow = new Color('#1689e8');
-const tableHot = new Color('#d7f0f5');
+const tableHot = new Color('#1b8ec2');
 const tableTmp = new Color();
 const tableInset = 0.08;
 const tableHalfWidth = TABLE.halfWidth - tableInset;
@@ -227,9 +199,9 @@ const tableLegHeight = Math.abs(floorY) - tableTopThickness;
 const tableLegRadius = 0.075;
 const tableLegX = TABLE.halfWidth - 0.42;
 const tableLegZ = TABLE.halfLength - 0.58;
-const tablePastelBlue = '#9fd5e5';
-const tablePastelSide = '#86c5d8';
-const tablePastelLeg = '#e9dfcf';
+const tablePastelBlue = '#0b5f97';
+const tablePastelSide = '#08456f';
+const tablePastelLeg = '#dbe3e3';
 
 function TableLine({ w, d, x, z, matRef }) {
   return (
@@ -515,64 +487,5 @@ export function WallScoreboard() {
         </Text>
       </group>
     </group>
-  );
-}
-
-export function SkyWall() {
-  const phase = useGameStore((state) => state.phase);
-  const winner = useGameStore((state) => state.winner);
-  const win = useRef(0);
-  const winFlash = useRef(0);
-
-  useEffect(() => {
-    if (phase === 'over' && winner) {
-      win.current = winner === 'player' ? 1 : -1;
-      winFlash.current = 1;
-    } else if (phase !== 'over') {
-      win.current = 0;
-    }
-  }, [phase, winner]);
-
-  const material = useMemo(() => new ShaderMaterial({
-    vertexShader: skyVertexShader,
-    fragmentShader: skyFragmentShader,
-    uniforms: {
-      uTime: { value: 0 },
-      uZenith: { value: new Color(TUNING.sky.zenith) },
-      uEdge: { value: new Color(TUNING.sky.edge) },
-      uHorizon: { value: TUNING.sky.horizon },
-      uHeat: { value: 0 },
-      uHit: { value: 0 },
-      uBounce: { value: 0 },
-      uSmash: { value: 0 },
-      uPoint: { value: 0 },
-      uWin: { value: 0 },
-      uWinFlash: { value: 0 },
-    },
-    depthWrite: true,
-    fog: false,
-    side: BackSide,
-  }), []);
-
-  useFrame((state) => {
-    material.uniforms.uTime.value = getDebugTime(state.clock.elapsedTime);
-    material.uniforms.uZenith.value.set(TUNING.sky.zenith);
-    material.uniforms.uEdge.value.set(TUNING.sky.edge);
-    material.uniforms.uHorizon.value = TUNING.sky.horizon;
-    material.uniforms.uHeat.value = arenaFx.heat;
-    material.uniforms.uHit.value = arenaFx.pulse;
-    material.uniforms.uBounce.value = arenaFx.bounce;
-    material.uniforms.uSmash.value = arenaFx.smash;
-    winFlash.current = damp(winFlash.current, 0, 1.6, 0.016);
-    material.uniforms.uPoint.value = arenaFx.score;
-    material.uniforms.uWin.value = win.current;
-    material.uniforms.uWinFlash.value = winFlash.current;
-  });
-
-  return (
-    <mesh position={[0, 4, -17.15]} frustumCulled={false}>
-      <planeGeometry args={[28.4, 12.4]} />
-      <primitive object={material} attach="material" />
-    </mesh>
   );
 }

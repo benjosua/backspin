@@ -7,9 +7,9 @@ services:
       if [ ! -x node_modules/.bin/vite ]; then npm ci --no-audit --prefer-offline; fi;
       if [ ! -x my-server/node_modules/.bin/tsx ]; then npm --prefix my-server ci --no-audit --prefer-offline; fi;
       trap 'kill 0' INT TERM;
-      npm run dev &
-      npm --prefix my-server start &
-      wait -n
+      while true; do npm run dev; echo 'vite exited; restarting in 1s'; sleep 1; done &
+      while true; do npm --prefix my-server start; echo 'server exited; restarting in 1s'; sleep 1; done &
+      wait
       "
     ports:
       - "5173:5173"

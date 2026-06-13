@@ -651,8 +651,8 @@ describe("backspin room", () => {
     const p1Profile = await rankedStore.getProfile(p1Account.user.id);
     const p2Profile = await rankedStore.getProfile(p2Account.user.id);
 
-    assert.strictEqual(p1Profile.rating, 1216);
-    assert.strictEqual(p2Profile.rating, 1184);
+    assert.strictEqual(p1Profile.rating, 1224);
+    assert.strictEqual(p2Profile.rating, 1176);
     assert.strictEqual(p1Profile.wins, 1);
     assert.strictEqual(p2Profile.losses, 1);
     assert.strictEqual(p1Profile.gamesPlayed, 1);

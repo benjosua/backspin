@@ -16,7 +16,6 @@ Open the Vite URL, usually http://localhost:5173/.
 
 - Source lives in `src/`.
 - Game assets live in `public/`.
-- The hall change is `public/environment-baked.glb`.
 
 ## Docker deployment
 

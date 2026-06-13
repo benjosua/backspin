@@ -15,6 +15,20 @@ import { DEBUG_MODE, debugFlags, randomSide, useGameStore } from './store.js';
 import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js';
 import { initAudio, playBounce, playCharge, playHit, playMenu, playNet } from './audio.js';
 import { predictBounceKick, resolvePlayerShot, simulateReceiverContact, solveLegalServe, solveReachableShot } from '../shared/backspin-core.js';
+import { otherSide as sharedOtherSide, currentServer as sharedCurrentServer, pointQuality as sharedPointQuality, resolveBouncePoint, resolveOutPoint } from '../shared/backspin-rules.js';
+import { applyBounce, detectNet, detectRacketContact, stepBall } from '../shared/backspin-physics.js';
+import { makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
+import {
+  makeBrain as makeSharedBrain,
+  resetBrain as resetSharedBrain,
+  updateBrain as updateSharedBrain,
+  fatiguePenalty as sharedFatiguePenalty,
+  effectiveSkill as sharedEffectiveSkill,
+  resolveBotServe,
+  resolveBotReturn,
+  resolveBotPaddleTarget,
+  stepBotPaddle,
+} from '../shared/backspin-bot.js';
 
 const clamp = MathUtils.clamp;
 const rand = () => Math.random();
@@ -70,31 +84,26 @@ export function resetInputHud() {
 }
 
 export function makeBrain() {
-  return { confidence: 0.5 };
+  return makeSharedBrain();
 }
 export function resetBrain(brain) {
-  brain.confidence = 0.5;
+  return resetSharedBrain(brain);
 }
 export function updateBrain(brain, aiWonPoint, pointQuality = 0.5) {
-  const delta = (aiWonPoint ? 1 : -1) * (0.06 + pointQuality * 0.14);
-  brain.confidence += delta + (0.5 - brain.confidence) * 0.06;
-  brain.confidence = clamp(brain.confidence, 0.08, 0.96);
-  return brain.confidence;
+  return updateSharedBrain(brain, aiWonPoint, pointQuality);
 }
 export function fatiguePenalty(exchange) {
-  return Math.min(0.28, Math.max(0, exchange - 5) * 0.014);
+  return sharedFatiguePenalty(exchange);
 }
 export function effectiveSkill(bot, brain, aiScore, playerScore, exchange = 0) {
-  const confidenceBoost = (brain.confidence - 0.5) * bot.confSwing;
-  const catchupPenalty = -bot.catchup * (aiScore - playerScore) * 0.03;
-  return clamp(bot.skill + confidenceBoost + catchupPenalty - fatiguePenalty(exchange), 0.2, 0.98);
+  return sharedEffectiveSkill(bot, brain, aiScore, playerScore, exchange);
 }
 
 function sideFromZ(z) {
   return z > 0 ? 'player' : 'ai';
 }
 function otherSide(side) {
-  return side === 'player' ? 'ai' : 'player';
+  return sharedOtherSide(side);
 }
 
 function clampBotDepth(bot, zDir, targetZ) {
@@ -111,8 +120,8 @@ export class GameEngine {
     this.spin = { top: 0, side: 0 };
     this.ballRotX = 0;
     this.ballRotY = 0;
-    this.player = { who: 'player', x: 0, y: 0.62, z: 5, rotX: -0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: 5, tell: 0 };
-    this.ai = { who: 'ai', x: 0, y: 0.62, z: -5, rotX: 0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: -5, tell: 0 };
+    this.player = makeRacket('player', 5);
+    this.ai = makeRacket('ai', -5);
     this.firstServer = randomSide();
     this.lastHitter = null;
     this.bouncedReceiver = false;
@@ -151,9 +160,9 @@ export class GameEngine {
     this.keys = { l: false, r: false };
     this.movePID = null;
     this.pointerLocked = false;
-    this.shadow = { x: 0, z: 0, op: 0, scale: 0.5 };
-    this.marker = { x: 0, z: 0, kickX: 0, kickZ: 0, op: 0, spin: 0, side: 0, smash: 0 };
-    this.aim = { x: 0, z: 0, op: 0, spinX: 0, spinY: 0, power: 0 };
+    this.shadow = makeShadow();
+    this.marker = makeMarker();
+    this.aim = makeAim();
     this.netWobble = 0;
     this.netRotX = 0;
 
@@ -225,10 +234,7 @@ export class GameEngine {
 
   currentServer() {
     const { scoreP, scoreAI } = useGameStore.getState();
-    const total = scoreP + scoreAI;
-    const bucket = scoreP >= 10 && scoreAI >= 10 ? total : Math.floor(total / 2);
-    if (bucket % 2 === 0) return this.firstServer;
-    return this.firstServer === 'player' ? 'ai' : 'player';
+    return sharedCurrentServer(this.firstServer, scoreP, scoreAI, sharedOtherSide);
   }
 
   newMatch() {
@@ -294,10 +300,7 @@ export class GameEngine {
     arenaFx.iz = this.ball.z;
     playMenu(winner === 'player');
 
-    let quality = 0.45;
-    if (ace) quality = 0.9;
-    else if (reason === 'WINNER') quality = 0.75;
-    else if (reason === 'NET' || reason === 'OUT' || reason === 'FAULT') quality = 0.3;
+    const quality = sharedPointQuality(reason, ace ? 0 : this.exchange);
     updateBrain(this.brain, winner === 'ai', quality);
     inputHud.aiConfidence = this.brain.confidence;
 
@@ -324,6 +327,7 @@ export class GameEngine {
     ball.set(racket.x, racket.y + PHYSICS.paddleThickness, racket.baseZ + zDir * 0.45);
 
     let topSpin, sideSpin, targetX, targetZ, flightTime;
+    let servedShot = null;
     const charge = isPlayer ? this.charge : 0;
     const attract = this.isAttractMode(state);
     if (isPlayer && !attract) {
@@ -339,24 +343,23 @@ export class GameEngine {
       const botScore = isPlayer ? state.scoreP : state.scoreAI;
       const opponentScore = isPlayer ? state.scoreAI : state.scoreP;
       const opponent = isPlayer ? this.ai : this.player;
-      const skill = effectiveSkill(bot, this.brain, botScore, opponentScore);
-      const confidence = this.brain.confidence;
-      const serveSpin = bot.serveSpin * (0.72 + skill * 0.28 + (confidence - 0.5) * bot.confSwing);
-      topSpin = (rand() < 0.4 + bot.serveSpin * 0.45 ? 1 : -1) * (0.22 + rand() * 0.42) * serveSpin;
-      sideSpin = (rand() - 0.5) * 1.55 * serveSpin;
-      const awayFromPlayer = opponent.x >= 0 ? -1 : 1;
-      const placement = bot.placement * 0.48 + bot.aggression * 0.32;
-      targetX = clamp(
-        awayFromPlayer * TABLE.halfWidth * (0.44 + placement * 0.4) + sideSpin * TABLE.halfWidth * 0.3 + (rand() - 0.5) * TABLE.halfWidth * Math.max(0.08, 0.28 - skill * 0.14),
-        -TABLE.halfWidth * 0.92,
-        TABLE.halfWidth * 0.92,
-      );
-      targetZ = zDir * (0.58 + rand() * (0.2 + skill * 0.22)) * TABLE.halfLength;
-      targetZ = clampBotDepth(bot, zDir, targetZ);
-      flightTime = clamp(0.68 - bot.serveSpin * 0.14 - skill * 0.12, 0.46, 0.68);
+      servedShot = resolveBotServe({
+        side: server,
+        ball: { x: ball.x, y: ball.y, z: ball.z },
+        bot,
+        brain: this.brain,
+        botScore,
+        opponentScore,
+        opponentX: opponent.x,
+        random: rand,
+      });
+      topSpin = servedShot.topSpin;
+      sideSpin = servedShot.sideSpin;
+      targetX = servedShot.targetX;
+      targetZ = servedShot.targetZ;
+      flightTime = servedShot.flightTime;
     }
-    if (!isPlayer && this.tier.minDepth != null && topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
-    const served = solveLegalServe(ball, targetX, targetZ, flightTime, topSpin, sideSpin, server);
+    const served = servedShot || solveLegalServe(ball, targetX, targetZ, flightTime, topSpin, sideSpin, server);
     topSpin = served.topSpin;
     sideSpin = served.sideSpin;
     targetX = served.targetX;
@@ -396,6 +399,7 @@ export class GameEngine {
     let error = 0;
     let power = 0;
     let playerShot = null;
+    let botShot = null;
 
     if (isPlayer && !attract) {
       const play = this.paddle.play;
@@ -440,47 +444,38 @@ export class GameEngine {
     } else {
       const bot = attract ? this.attractBot : this.tier;
       const { scoreAI, scoreP } = useGameStore.getState();
-      const fatigue = fatiguePenalty(this.exchange);
-      const botScore = isPlayer ? scoreP : scoreAI;
-      const opponentScore = isPlayer ? scoreAI : scoreP;
-      const skill = effectiveSkill(bot, this.brain, botScore, opponentScore, this.exchange);
-      const confidence = this.brain.confidence;
       const opponent = isPlayer ? this.ai : this.player;
-      const playerX = opponent.x;
-      const incomingSpeed = Math.hypot(this.vel.x, this.vel.z);
-      const softBall = !highBall && incomingSpeed < 6.2 && ball.y > 0.42;
-      this._aiSmash = (highBall || softBall) && rand() < bot.smashChance * (0.55 + confidence * 0.7) * (1 - fatigue * 0.55);
-      const playerHeat = this.lastHitter === 'player' && incomingSpeed >= 7.8;
-      const lobChance = bot.minDepth == null ? (1 - bot.aggression) * 0.28 : bot.aggression * 0.22 + bot.spin * 0.04;
-      this._lob = playerHeat && !this._aiSmash && !highBall && rand() < lobChance;
-
-      if (this._lob) {
-        topSpin = -(0.12 + rand() * 0.22);
-        sideSpin = (rand() - 0.5) * 0.8 * bot.spin;
-      } else {
-        topSpin = rand() < 0.1 + bot.spin * 0.12
-          ? -(0.25 + rand() * 0.45) * (0.6 + bot.spin)
-          : (0.2 + rand() * 0.6) * (0.4 + bot.spin) * skill;
-        sideSpin = (rand() - 0.5) * 1.7 * bot.spin * (0.7 + confidence * 0.5);
-      }
-
-      if (Math.abs(opponent.vx) > 3 && rand() < bot.wrongFoot * confidence) {
-        targetX = clamp(((-Math.sign(opponent.vx) || 1) * TABLE.halfWidth * (0.45 + bot.aggression * 0.4)) + (rand() - 0.5) * TABLE.halfWidth * 0.3, -TABLE.halfWidth * 0.9, TABLE.halfWidth * 0.9);
-      } else {
-        const away = playerX >= 0 ? -1 : 1;
-        targetX = clamp(-playerX * (0.3 + bot.placement * 0.4) + away * bot.aggression * TABLE.halfWidth * 0.45 + (rand() - 0.5) * TABLE.halfWidth * (1 - bot.aggression), -TABLE.halfWidth * 0.9, TABLE.halfWidth * 0.9);
-      }
-      error = bot.error * (1.25 - confidence * 0.5) + fatigue * 0.08;
+      botShot = resolveBotReturn({
+        side: who,
+        ball: { x: ball.x, y: ball.y, z: ball.z },
+        incomingVelocity: { x: this.vel.x, y: this.vel.y, z: this.vel.z },
+        exchange: this.exchange,
+        bot,
+        brain: this.brain,
+        botScore: isPlayer ? scoreP : scoreAI,
+        opponentScore: isPlayer ? scoreAI : scoreP,
+        opponentX: opponent.x,
+        opponentVx: opponent.vx,
+        random: rand,
+      });
+      topSpin = botShot.spin.top;
+      sideSpin = botShot.spin.side;
+      targetX = botShot.target.x;
+      targetZ = botShot.target.z;
+      flightTime = botShot.flightTime;
+      power = botShot.power || 0;
+      this._aiSmash = Boolean(botShot.smash);
+      this._lob = Boolean(botShot.lob);
     }
 
     const smash = botControlled ? this._aiSmash : playerShot?.smash;
     if (isPlayer && !botControlled && smash) power = Math.max(power, 0.85);
-    if (botControlled && smash) {
+    if (botControlled && !botShot && smash) {
       topSpin = Math.max(topSpin, 0.2);
       flightTime = PHYSICS.spinDecay;
       targetZ = zDir * (0.72 + rand() * 0.2) * TABLE.halfLength;
       power = Math.max(power, 0.85);
-    } else if (botControlled) {
+    } else if (botControlled && !botShot) {
       if (topSpin > 0) {
         flightTime *= 1 - topSpin * 0.24;
         targetZ = zDir * (0.58 + rand() * 0.32) * TABLE.halfLength;
@@ -496,7 +491,7 @@ export class GameEngine {
       }
     }
 
-    if (botControlled) {
+    if (botControlled && !botShot) {
       targetZ = clampBotDepth(botControlled && attract ? this.attractBot : this.tier, zDir, targetZ);
       if ((botControlled && attract ? this.attractBot : this.tier).minDepth != null && topSpin < -0.15) topSpin = Math.max(topSpin, -0.22);
     }
@@ -504,6 +499,8 @@ export class GameEngine {
     let solved;
     if (isPlayer && !botControlled) {
       solved = new Vector3(playerShot.velocity.x, playerShot.velocity.y, playerShot.velocity.z);
+    } else if (botShot) {
+      solved = new Vector3(botShot.velocity.x, botShot.velocity.y, botShot.velocity.z);
     } else {
       const reachable = solveReachableShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin, who);
       topSpin = reachable.topSpin;
@@ -513,7 +510,7 @@ export class GameEngine {
     }
     this.spin.top = topSpin;
     this.spin.side = sideSpin;
-    if (error > 0) {
+    if (error > 0 && !botShot) {
       const reachableVelocity = solved.clone();
       solved.x *= 1 + (rand() - 0.5) * 2 * error;
       solved.y *= 1 + (rand() - 0.5) * 2 * error;
@@ -558,93 +555,65 @@ export class GameEngine {
 
   updateBotPaddle(who, dt, phase, bot) {
     const racket = who === 'player' ? this.player : this.ai;
-    const ball = this.ball;
-    const incoming = phase === 'exchange' && this.lastHitter === otherSide(who);
-    const fatigue = fatiguePenalty(this.exchange);
-    const maxSpeed = bot.paddleSpeed * (1 - fatigue * 0.32);
-    const react = bot.react * (1 - fatigue * 0.22);
-    const racketZ = who === 'player' ? PHYSICS.gravity : -PHYSICS.gravity;
-    const movingToward = who === 'player' ? this.vel.z > 0.1 : this.vel.z < -0.1;
-    let target = 0;
-
-    if (incoming && movingToward) {
-      const time = clamp((racketZ - ball.z) / (this.vel.z || 0.000001), 0, 1.2);
-      const predicted = ball.x + this.vel.x * time + this.spin.side * 0.5 * PHYSICS.magnus * time * time;
-      target = clamp(MathUtils.lerp(ball.x, predicted, bot.predict), -TABLE.halfWidth - 0.4, TABLE.halfWidth + 0.4);
-    } else if (incoming) {
-      target = racket.x * 0.7;
-    }
-
-    const desiredVx = clamp((target - racket.x) * 7, -maxSpeed, maxSpeed);
-    racket.vx = damp(racket.vx, desiredVx, react, dt);
-    racket.x = clamp(racket.x + racket.vx * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    const target = resolveBotPaddleTarget({
+      side: who,
+      ball: this.ball,
+      velocity: this.vel,
+      spin: this.spin,
+      phase,
+      lastHitter: this.lastHitter,
+      exchange: this.exchange,
+      bot,
+      currentX: racket.x,
+    });
+    stepBotPaddle({ racket, target, dt, bot, exchange: this.exchange });
   }
 
   updateAI(dt, phase) {
-    const bot = this.tier;
-    const ai = this.ai;
-    const ball = this.ball;
     if (this.reactTimer > 0) this.reactTimer -= dt;
-    const fatigue = fatiguePenalty(this.exchange);
-    const firstReturn = this.exchange === 0 && phase === 'exchange' && this.lastHitter === 'player';
-    let predict = bot.predict * (1 - fatigue * 1.15);
-    if (firstReturn && bot.servePredict != null) predict = Math.max(predict, bot.servePredict);
-    const maxSpeed = bot.paddleSpeed * (1 - fatigue * 0.32);
-    const react = bot.react * (1 - fatigue * 0.22);
-    let target = 0;
-    const incoming = phase === 'exchange' && this.lastHitter === 'player';
-    if (incoming && this.reactTimer <= 0) {
-      const time = this.vel.z < -0.1 ? clamp((-4.8 - ball.z) / this.vel.z, 0, 1.2) : 0.4;
-      const predicted = ball.x + this.vel.x * time + this.spin.side * 0.5 * PHYSICS.magnus * time * time;
-      target = clamp(MathUtils.lerp(ball.x, predicted, predict), -TABLE.halfWidth - 0.4, TABLE.halfWidth + 0.4);
-    } else if (incoming) {
-      target = ai.x * 0.7;
-    }
-    const desiredVx = clamp((target - ai.x) * 7, -maxSpeed, maxSpeed);
-    ai.vx = damp(ai.vx, desiredVx, react, dt);
-    ai.x = clamp(ai.x + ai.vx * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    const target = this.reactTimer <= 0
+      ? resolveBotPaddleTarget({
+          side: 'ai',
+          ball: this.ball,
+          velocity: this.vel,
+          spin: this.spin,
+          phase,
+          lastHitter: this.lastHitter,
+          exchange: this.exchange,
+          bot: this.tier,
+          currentX: this.ai.x,
+        })
+      : this.ai.x * 0.7;
+    stepBotPaddle({ racket: this.ai, target, dt, bot: this.tier, exchange: this.exchange });
   }
 
   handleBounce() {
     const ball = this.ball;
     if (!(Math.abs(ball.x) <= 2.97) || !(Math.abs(ball.z) <= 4.87)) return false;
+    applyBounce(ball, this.vel, this.spin);
     const side = sideFromZ(ball.z);
-    ball.y = TABLE.ballRadius;
-    this.vel.y = Math.abs(this.vel.y) * TABLE.bounceRestitution * (1 - Math.max(this.spin.top, 0) * 0.18);
-    const zSign = Math.sign(this.vel.z) || 1;
-    this.vel.z += zSign * this.spin.top * PHYSICS.speedScale;
-    this.vel.x += this.spin.side * PHYSICS.curveScale;
-    this.spin.top *= 0.55;
-    this.spin.side *= 0.55;
     this.fx?.ring?.(ball.x, ball.z);
     raiseFx('bounce', 1);
     raiseFx('pulse', 0.4);
     arenaFx.ix = ball.x;
     arenaFx.iz = ball.z;
     playBounce();
-    if (this.lastHitter && this.exchange === 0) {
-      this.serveBounceCount += 1;
-      if (this.serveBounceCount === 1) {
-        if (side !== this.lastHitter) this.point(otherSide(this.lastHitter), 'FAULT');
-      } else if (this.serveBounceCount === 2) {
-        if (side === this.lastHitter) this.point(otherSide(this.lastHitter), 'FAULT');
-        else this.bouncedReceiver = true;
-      } else {
-        this.point(this.lastHitter, 'WINNER');
-      }
-      return true;
-    }
-    if (this.lastHitter && side === this.lastHitter) this.point(otherSide(this.lastHitter), 'FAULT');
-    else if (this.bouncedReceiver) this.point(this.lastHitter, 'WINNER');
-    else this.bouncedReceiver = true;
+    const result = resolveBouncePoint({
+      side,
+      lastHitter: this.lastHitter,
+      exchange: this.exchange,
+      serveBounceCount: this.serveBounceCount,
+      bouncedReceiver: this.bouncedReceiver,
+    });
+    this.serveBounceCount = result.serveBounceCount ?? this.serveBounceCount;
+    this.bouncedReceiver = result.bouncedReceiver ?? this.bouncedReceiver;
+    if (result.winner) this.point(result.winner, result.reason);
     return true;
   }
 
   handleNet(prevZ) {
     const ball = this.ball;
-    if (Math.sign(prevZ) === Math.sign(ball.z)) return false;
-    const crossT = (0 - prevZ) / (ball.z - prevZ || 0.000001);
-    if (MathUtils.lerp(this.prevBallY, ball.y, crossT) - 0.048 > TABLE.netHeight) return false;
+    if (!detectNet(prevZ, this.prevBallY, ball)) return false;
     ball.z = Math.sign(prevZ) * 0.06;
     this.vel.z *= -0.12;
     this.vel.x *= 0.4;
@@ -661,17 +630,21 @@ export class GameEngine {
 
   checkRacketHit(who, prevZ) {
     if (this.lastHitter === who || !this.bouncedReceiver) return;
-    const racketZ = who === 'player' ? PHYSICS.gravity : -PHYSICS.gravity;
-    if (!(who === 'player' ? this.vel.z > 0 : this.vel.z < 0)) return;
     const ball = this.ball;
-    if ((prevZ - racketZ) * (ball.z - racketZ) > 0) return;
     const racket = who === 'player' ? this.player : this.ai;
-    const t = (racketZ - prevZ) / (ball.z - prevZ || 0.000001);
-    const x = MathUtils.lerp(this.prevBallX, ball.x, t);
-    const y = MathUtils.lerp(this.prevBallY, ball.y, t);
-    const reach = who === 'player' ? this.reach : PHYSICS.serveHeight;
-    if (!(Math.abs(x - racket.x) > reach) && !(y < 0.05) && !(who === 'player' ? y > 3.4 : Math.abs(y - racket.y) > 1)) {
-      ball.set(x, y, racketZ);
+    const contact = detectRacketContact({
+      side: who,
+      prev: { x: this.prevBallX, y: this.prevBallY, z: prevZ },
+      ball,
+      velocity: this.vel,
+      racketX: racket.x,
+      reach: who === 'player' ? this.reach : PHYSICS.serveHeight,
+      minY: who === 'player' ? 0.05 : racket.y - 1,
+      maxY: who === 'player' ? 3.4 : racket.y + 1,
+      racketZ: PHYSICS.gravity,
+    });
+    if (contact) {
+      ball.set(contact.x, contact.y, contact.z);
       this.doHit(who);
     }
   }
@@ -884,11 +857,7 @@ export class GameEngine {
       this.prevBallX = ball.x;
       this.prevBallY = ball.y;
       const prevZ = ball.z;
-      this.vel.x += this.spin.side * PHYSICS.magnus * dt;
-      this.vel.y -= (30 + this.spin.top * 11) * dt;
-      ball.x += this.vel.x * dt;
-      ball.y += this.vel.y * dt;
-      ball.z += this.vel.z * dt;
+      stepBall(ball, this.vel, this.spin, dt);
       if (phase === 'exchange') {
         if (!this.handleNet(prevZ)) {
           this.checkRacketHit('player', prevZ);
@@ -916,11 +885,7 @@ export class GameEngine {
 
     this.ballRotX -= (2 + this.spin.top * 16) * dt;
     this.ballRotY += this.spin.side * 14 * dt;
-    const tableish = Math.abs(ball.x) < 3.25 && Math.abs(ball.z) < 5.15;
-    this.shadow.x = ball.x;
-    this.shadow.z = ball.z;
-    this.shadow.op = tableish ? clamp(0.45 - ball.y * 0.09, 0.1, 0.45) : 0;
-    this.shadow.scale = 0.5 + ball.y * 0.16;
+    updateShadow(this.shadow, ball, TABLE);
     const aiming = !attract && (phase === 'exchange' || (phase === 'serve' && server === 'player'));
     this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
     this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
@@ -930,9 +895,7 @@ export class GameEngine {
     this.aim.power = this.charge;
 
     if (phase === 'exchange' && this.lastHitter === 'ai' && !this.bouncedReceiver) {
-      this.marker.op = 0;
-      this.marker.spin = 0;
-      this.marker.smash = 0;
+      resetMarker(this.marker);
       const prediction = predictBounceKick(ball, this.vel, this.spin);
       if (prediction) {
         this.marker.x = prediction.x;
@@ -945,9 +908,7 @@ export class GameEngine {
         this.marker.op = Math.abs(this.marker.x) < TABLE.halfWidth && Math.abs(this.marker.z) < TABLE.halfLength ? 0.32 + Math.sin(time * 10) * 0.08 : 0;
       }
     } else {
-      this.marker.op = 0;
-      this.marker.spin = 0;
-      this.marker.smash = 0;
+      resetMarker(this.marker);
     }
 
     this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
@@ -1036,10 +997,7 @@ export class GameEngine {
     ball.z = damp(ball.z, 0, 3, dt);
     ball.y = damp(ball.y, 0.34 + Math.sin(time * 1.5) * 0.04, 3, dt);
     this.ballRotY += dt * 0.6;
-    this.shadow.x = ball.x;
-    this.shadow.z = ball.z;
-    this.shadow.op = clamp(0.4 - ball.y * 0.1, 0.12, 0.4);
-    this.shadow.scale = 0.5 + ball.y * 0.16;
+    updateShadow(this.shadow, ball, TABLE);
     this.marker.op = 0;
     this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
     this.netRotX = Math.sin(time * 26) * this.netWobble * 0.1;

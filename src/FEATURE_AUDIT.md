@@ -23,7 +23,6 @@ Scope: `/recovered-src` compared against `recovered-webcrack-nojsx/app-only.deob
 
 ### 1. 3D wall scoreboard text from `EE` — restored
 Original `EE` renders:
-- Back-wall shader plane.
 - 3D score text for player and CPU using Troika Text.
 - `YOU` and opponent labels.
 - Center divider line.
@@ -33,12 +32,8 @@ Original `EE` renders:
 - Label highlight based on current server.
 
 Recovered source now has:
-- Back-wall shader plane (`SkyWall`).
 - `WallScoreboard` with Troika 3D player/CPU scores, labels, divider, serve dot, score pop, breathing/heat animation.
 - DOM scoreboard override removed; deployed CSS hides DOM `.top` again, matching original.
-
-### 2. Wall win/loss wash uniforms from `EE` — restored
-`SkyWall` now updates `uWin` and `uWinFlash` from store `phase/winner`.
 
 ### 3. Mobile/desktop gate `xM` — restored
 Original app wraps root in `xM`, which blocks coarse pointer or width <= 640px with:
@@ -68,15 +63,11 @@ Impact:
 - Normal users unaffected.
 - Debug/tuning workflow not restored.
 
-### 5. Source-mode CSS override — active
-`src/backspin-overrides.css` remains linked for Backspin-specific layout tweaks and online UI overrides.
-
 ## Recently fixed recovery mismatches
 
 - Player flick side-spin used wrong constant:
   - Wrong: `PHYSICS.magnus` (`7.5`).
   - Correct original equivalent: `CAMERA.cameraZBase` (`0.34`).
-- Recovered source used old `/src/styles.css` instead of deployed CSS. Fixed the source entry to load `/assets/index-BzZ6c66z.css` plus override.
 - Source-mode Troika font data hit jsDelivr. Fixed via `configureTextBuilder` local vendor URL.
 
 ## Priority next work

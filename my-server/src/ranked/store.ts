@@ -210,12 +210,12 @@ class PostgresRankedStore implements RankedStore {
         return { recorded: false, p1Delta: 0, p2Delta: 0 };
       }
       const profiles = await client.query(
-        "SELECT user_id, rating FROM ranked_profiles WHERE user_id = ANY($1::text[]) FOR UPDATE",
+        "SELECT user_id, rating, games_played FROM ranked_profiles WHERE user_id = ANY($1::text[]) FOR UPDATE",
         [[input.p1UserId, input.p2UserId]],
       );
-      const byId = new Map(profiles.rows.map((row) => [row.user_id, Number(row.rating)]));
-      const p1Before = byId.get(input.p1UserId) ?? DEFAULT_RATING;
-      const p2Before = byId.get(input.p2UserId) ?? DEFAULT_RATING;
+      const byId = new Map(profiles.rows.map((row) => [row.user_id, { rating: Number(row.rating), gamesPlayed: Number(row.games_played) }]));
+      const p1Before = byId.get(input.p1UserId) ?? { rating: DEFAULT_RATING, gamesPlayed: 0 };
+      const p2Before = byId.get(input.p2UserId) ?? { rating: DEFAULT_RATING, gamesPlayed: 0 };
       const p1Won = input.winnerUserId === input.p1UserId;
       const elo = p1Won ? applyElo(p1Before, p2Before) : applyElo(p2Before, p1Before);
       const p1Delta = p1Won ? elo.winnerDelta : elo.loserDelta;
@@ -232,7 +232,7 @@ class PostgresRankedStore implements RankedStore {
       await client.query(
         `INSERT INTO ranked_matches (room_id, match_id, p1_user_id, p2_user_id, p1_score, p2_score, winner_user_id, p1_rating_before, p2_rating_before, p1_delta, p2_delta, ended_reason)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [input.roomId, input.matchId || null, input.p1UserId, input.p2UserId, input.p1Score, input.p2Score, input.winnerUserId, p1Before, p2Before, p1Delta, p2Delta, input.endedReason],
+        [input.roomId, input.matchId || null, input.p1UserId, input.p2UserId, input.p1Score, input.p2Score, input.winnerUserId, p1Before.rating, p2Before.rating, p1Delta, p2Delta, input.endedReason],
       );
       await client.query("COMMIT");
       return { recorded: true, p1Delta, p2Delta };
@@ -323,7 +323,7 @@ class MemoryRankedStore implements RankedStore {
     const p1 = await this.getProfile(input.p1UserId);
     const p2 = await this.getProfile(input.p2UserId);
     const p1Won = input.winnerUserId === input.p1UserId;
-    const elo = p1Won ? applyElo(p1.rating, p2.rating) : applyElo(p2.rating, p1.rating);
+    const elo = p1Won ? applyElo(p1, p2) : applyElo(p2, p1);
     const p1Delta = p1Won ? elo.winnerDelta : elo.loserDelta;
     const p2Delta = p1Won ? elo.loserDelta : elo.winnerDelta;
     this.profiles.set(input.p1UserId, { userId: input.p1UserId, rating: p1.rating + p1Delta, wins: p1.wins + (p1Won ? 1 : 0), losses: p1.losses + (p1Won ? 0 : 1), gamesPlayed: p1.gamesPlayed + 1 });

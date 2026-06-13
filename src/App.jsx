@@ -14,7 +14,7 @@ import { DesktopOnlyGate } from './components/DesktopOnlyGate.jsx';
 import { useFrame, useThree } from '@react-three/fiber';
 
 const DebugPanel = DEBUG_MODE ? lazy(() => import('./components/DebugPanel.jsx')) : null;
-const renderScaleDpr = { low: 1, medium: 1.5, high: 2.5 };
+const renderScaleDpr = { low: 0.9, medium: 1.25, high: 1.75 };
 
 
 function SceneContent() {
@@ -78,8 +78,8 @@ function PerformanceRuntime() {
       if (slow && data.dpr > perfSettings.minDpr) {
         data.dpr = Math.max(perfSettings.minDpr, data.dpr - 0.15);
         setDpr(data.dpr);
-      } else if (fast && data.dpr < perfSettings.maxDpr) {
-        data.dpr = Math.min(perfSettings.maxDpr, data.dpr + 0.05);
+      } else if (fast && data.dpr < targetDpr) {
+        data.dpr = Math.min(targetDpr, data.dpr + 0.05);
         setDpr(data.dpr);
       }
       data.frames = 0;
@@ -109,9 +109,9 @@ export default function App() {
       <div className="fixed inset-0 overflow-hidden bg-background">
       <Canvas
         flat
-        shadows
-        dpr={[1, targetDpr]}
-        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false }}
+        shadows={renderScale !== 'low'}
+        dpr={[0.7, targetDpr]}
+        gl={{ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false }}
         camera={{
           fov: DEBUG_MODE ? 38 : 44,
           position: DEBUG_MODE ? CAMERA.introPosition : CAMERA.desktopPosition,

@@ -12,9 +12,9 @@ const normalizePlayerName = (value) => {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
 };
 export const RENDER_SCALES = {
-  low: { label: 'LOW', dpr: 1 },
-  medium: { label: 'MED', dpr: 1.5 },
-  high: { label: 'HIGH', dpr: 2.5 },
+  low: { label: 'LOW', dpr: 0.9 },
+  medium: { label: 'MED', dpr: 1.25 },
+  high: { label: 'HIGH', dpr: 1.75 },
 };
 
 function devicePrefersLowFx() {

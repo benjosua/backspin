@@ -20,8 +20,8 @@ import { perfSettings } from '../performance.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { getDebugTime } from '../debug-tuning.js';
 import { game, inputHud } from '../engine.js';
-import { networkGame } from '../network.js';
 import { replayGame } from '../replay.js';
+import { gameDrivers, getActiveGameDriver } from '../game-drivers.js';
 import { DEBUG_MODE, useGameStore } from '../store.js';
 import { paddleFragmentShader, paddleVertexShader } from '../shaders.js';
 import { createPaddleHeadShape, paddleHeadExtrude } from '../paddleShape.js';
@@ -115,7 +115,10 @@ const Paddle = forwardRef(function Paddle({ paddle }, ref) {
   const face = useMemo(() => makePaddleFaceMaterial(paddle), [paddle]);
   const glowTexture = useMemo(() => makeGlowTexture(paddle.colors.glowRGB), [paddle.colors.glowRGB]);
 
-  useEffect(() => () => face.dispose(), [face]);
+  useEffect(() => () => {
+    face.dispose();
+    glowTexture.dispose();
+  }, [face, glowTexture]);
   useImperativeHandle(ref, () => ({ group, ring, glow, face }), [face]);
 
   return (
@@ -232,6 +235,8 @@ const Net = forwardRef(function Net(_props, ref) {
   const posts = useRef([]);
   const texture = useMemo(makeNetTexture, []);
 
+  useEffect(() => () => texture.dispose(), [texture]);
+
   useEffect(() => {
     const { color, opacity } = TUNING.net;
     if (cloth.current) {
@@ -285,6 +290,7 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
   const impacts = useRef([]);
   const scoreTexts = useRef([]);
   const confetti = useRef(null);
+  const activeConfetti = useRef([]);
   const temp = useMemo(() => new Object3D(), []);
   const confettiPalette = useMemo(() => confettiColors.map((color) => new Color(color)), []);
   const ringState = useMemo(() => Array.from({ length: ringCount }, () => ({ life: 0 })), []);
@@ -295,6 +301,11 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
     life: 0, max: 1, dead: true, landed: false,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0, w: 0, swf: 3, sc: 1,
   })), []);
+
+  useEffect(() => () => {
+    glowTexture.dispose();
+    ringTexture.dispose();
+  }, [glowTexture, ringTexture]);
 
   useEffect(() => {
     const mesh = confetti.current;
@@ -385,6 +396,7 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
         state.life = state.max = randomBetween(2.2, 3.6);
         state.dead = false;
         state.landed = false;
+        activeConfetti.current.push(i);
         state.x = x + randomBetween(-0.5, 0.5);
         state.y = y + randomBetween(-0.2, 0.2);
         state.z = z + randomBetween(-0.5, 0.5);
@@ -461,7 +473,9 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
     const mesh = confetti.current;
     if (!mesh) return;
     let dirty = false;
-    for (let i = 0; i < confettiCount; i += 1) {
+    const active = activeConfetti.current;
+    for (let n = active.length - 1; n >= 0; n -= 1) {
+      const i = active[n];
       const state = confettiState[i];
       if (state.life <= 0) {
         if (!state.dead) {
@@ -472,6 +486,8 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
           mesh.setMatrixAt(i, temp.matrix);
           dirty = true;
         }
+        active[n] = active[active.length - 1];
+        active.pop();
         continue;
       }
       state.life -= dt;
@@ -635,12 +651,7 @@ export function Actors() {
         document.exitPointerLock();
       }
     };
-    const currentGame = () => {
-      const mode = useGameStore.getState().mode;
-      if (mode === 'online') return networkGame;
-      if (mode === 'replay') return replayGame;
-      return game;
-    };
+    const currentGame = () => getActiveGameDriver();
     const onMove = (event) => currentGame().onPointerMove(event);
     const onDown = (event) => {
       currentGame().onPointerDown(event);
@@ -702,8 +713,7 @@ export function Actors() {
       window.removeEventListener('keyup', onKeyUp);
       unsubscribe();
       if (document.pointerLockElement === element) document.exitPointerLock();
-      game.setPointerLocked(false);
-      networkGame.setPointerLocked(false);
+      Object.values(gameDrivers).forEach((driver) => driver.setPointerLocked?.(false));
       inputHud.cursorVisible = false;
       setCursor(element, '');
     };
@@ -715,7 +725,7 @@ export function Actors() {
 
   useFrame((state, delta) => {
     const store = useGameStore.getState();
-    const activeGame = store.mode === 'online' ? networkGame : store.mode === 'replay' ? replayGame : game;
+    const activeGame = getActiveGameDriver(store.mode);
     activeGame.update(delta, getDebugTime(state.clock.elapsedTime), camera, effects.current);
 
     const now = getDebugTime(state.clock.elapsedTime);

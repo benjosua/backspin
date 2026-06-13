@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
+import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
@@ -20,10 +21,9 @@ const padScore = (value) => String(value).padStart(2, '0');
 const dialRadius = 30;
 const dialCircumference = Math.PI * 2 * dialRadius;
 const isCoarsePointer = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
-const glassPanel = 'pointer-events-auto rounded-3xl border bg-popover/90 p-6 text-popover-foreground shadow-xl ring-1 ring-foreground/5 backdrop-blur-md';
+const glassPanel = 'pointer-events-auto rounded-3xl border bg-popover/90 p-6 text-popover-foreground tracking-[0.04em] shadow-xl ring-1 ring-foreground/5 backdrop-blur-md';
 const labelText = 'text-[10px] font-medium uppercase tracking-[0.34em] text-muted-foreground';
 const row = 'flex flex-wrap items-center justify-center gap-2';
-const statBox = 'rounded-2xl border bg-background/70 p-3 shadow-sm';
 const activeButton = 'bg-primary text-primary-foreground hover:bg-primary/90';
 
 function stop(event) {
@@ -40,6 +40,31 @@ function formatReplayClock(ms) {
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+const rankTiers = [
+  { name: 'ONYX', min: 2000 },
+  { name: 'MASTER', min: 1800 },
+  { name: 'DIAMOND', min: 1650 },
+  { name: 'PLATINUM', min: 1500 },
+  { name: 'GOLD', min: 1350 },
+  { name: 'SILVER', min: 1200 },
+  { name: 'BRONZE', min: 1000 },
+  { name: 'ROOKIE', min: 0 },
+];
+
+function rankTier(rating = 1200) {
+  return rankTiers.find((tier) => rating >= tier.min) || rankTiers[rankTiers.length - 1];
+}
+
+function ratingPhase(profile) {
+  const games = profile?.gamesPlayed ?? 0;
+  const rating = profile?.rating ?? 1200;
+  if (games < 10) return { label: 'PLACEMENT', detail: `${10 - games} fast-calibration games left`, progress: games / 10, k: 48 };
+  if (games < 30) return { label: 'CALIBRATING', detail: `${30 - games} early-ladder games left`, progress: (games - 10) / 20, k: 40 };
+  if (rating >= 1800) return { label: 'ELITE', detail: 'tight high-rank changes', progress: 1, k: 24 };
+  if (rating >= 1500) return { label: 'ESTABLISHED', detail: 'stable rating changes', progress: 1, k: 28 };
+  return { label: 'ESTABLISHED', detail: 'standard rating changes', progress: 1, k: 32 };
 }
 
 export function ChargeDial() {
@@ -93,7 +118,7 @@ export function ChargeDial() {
           <circle ref={arc} cx="40" cy="40" r={dialRadius} className="fill-none stroke-primary stroke-[3] [stroke-linecap:round]" style={{ strokeDasharray: dialCircumference, strokeDashoffset: dialCircumference }} />
         </svg>
         <span ref={dot} className="absolute size-2 rounded-full bg-primary shadow-lg" />
-        <span ref={label} className="absolute left-24 top-8 whitespace-nowrap text-sm font-medium tracking-[0.18em] text-foreground">SPIN</span>
+        <span ref={label} className="absolute left-24 top-8 whitespace-nowrap text-sm font-medium tracking-[0.18em] text-muted-foreground">SPIN</span>
       </div>
       <div className="absolute bottom-10 left-32 whitespace-nowrap text-[10px] font-medium tracking-[0.18em] text-muted-foreground" ref={aim}>AIM CENTER · MID · SPIN 0 · POWER 0</div>
       <div className="pointer-events-none absolute left-1/2 top-[44%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap text-4xl font-medium tracking-[0.18em]" ref={callout} />
@@ -262,11 +287,10 @@ function ReplayBrowser() {
   const directId = lookup.trim();
   return (
     <div className="fixed inset-0 z-20 grid place-items-center bg-background/50 p-6 backdrop-blur-sm" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <section className={cn(glassPanel, 'grid max-h-[86vh] w-[min(860px,92vw)] gap-4 overflow-auto')}>
+      <section className={cn(glassPanel, 'grid max-h-[86vh] w-[min(760px,92vw)] gap-4 overflow-auto')}>
         <header className="flex items-center justify-between gap-4">
           <div>
-            <span className={labelText}>REPLAY ROOM</span>
-            <h2 className="mt-1 text-3xl font-medium tracking-[0.12em]">LOAD REPLAY</h2>
+            <h2 className="text-2xl font-medium">Replays</h2>
           </div>
           <Button variant="outline" size="sm" onClick={closeReplayBrowser}>CLOSE</Button>
         </header>
@@ -274,29 +298,28 @@ function ReplayBrowser() {
           <Input value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="MATCH ID" aria-label="match id" />
           <Button variant="outline" size="sm" disabled={!directId || replayStatus === 'loading'} onClick={() => play(directId)}>PLAY ID</Button>
         </div>
-        {busy && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">LOADING MATCHES...</div>}
-        {replayError && replayStatus === 'error' && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-destructive">{replayError}</div>}
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
-          {!busy && matches.length === 0 && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">{authUser ? 'NO SAVED REPLAYS YET' : 'PASTE A MATCH ID TO WATCH'}</div>}
+        {busy && <div className="py-4 text-center text-sm text-muted-foreground">Loading matches...</div>}
+        {replayError && replayStatus === 'error' && <div className="py-4 text-center text-sm text-destructive">{replayError}</div>}
+        <div className="grid divide-y border-y">
+          {!busy && matches.length === 0 && <div className="py-4 text-center text-sm text-muted-foreground">{authUser ? 'No saved replays yet' : 'Paste a match ID to watch'}</div>}
           {matches.map((item) => {
             const match = item.match;
             const viewerWon = match.winner === item.viewerSide;
             return (
-              <article className={cn('relative grid gap-3 overflow-hidden rounded-2xl border bg-background/70 p-4 shadow-sm', viewerWon ? 'border-primary/30' : 'border-border')} key={match.id}>
-                <div className={cn('absolute inset-y-0 left-0 w-1', viewerWon ? 'bg-primary' : 'bg-muted-foreground')} />
-                <div className="flex items-center justify-between gap-2 text-[10px] font-medium tracking-[0.14em] text-muted-foreground">
+              <article className="grid grid-cols-[90px_minmax(0,1fr)_auto] items-center gap-3 py-3 text-sm max-sm:grid-cols-1" key={match.id}>
+                <div className="grid gap-1 text-xs text-muted-foreground">
                   <span>{formatReplayDate(match.endedAt || match.startedAt)}</span>
-                  <Badge variant={match.ranked ? 'default' : 'secondary'}>{match.ranked ? 'RANKED' : match.mode.toUpperCase()}</Badge>
+                  <span>{match.ranked ? 'Ranked' : match.mode}</span>
                 </div>
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                  <span className="truncate text-sm font-medium tracking-[0.08em]">{match.p1Name}</span>
-                  <strong className="text-2xl font-medium">{match.p1Score}—{match.p2Score}</strong>
-                  <span className="truncate text-right text-sm font-medium tracking-[0.08em]">{match.p2Name}</span>
-                </div>
-                <div className="flex justify-between gap-2 text-[10px] font-medium tracking-[0.12em] text-muted-foreground">
-                  <span>{item.stats.winners} WINNERS</span>
-                  <span>{item.stats.smashes} SMASHES</span>
-                  <span>{item.stats.longestRally} LONGEST</span>
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className="truncate">{match.p1Name}</span>
+                    <strong className={cn('shrink-0 font-medium tabular-nums', viewerWon && 'text-primary')}>{match.p1Score}—{match.p2Score}</strong>
+                    <span className="truncate">{match.p2Name}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {item.stats.winners} winners · {item.stats.smashes} smashes · {item.stats.longestRally} rally
+                  </div>
                 </div>
                 <Button variant="outline" size="sm" disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
                   {item.replayReady ? 'PLAY' : 'NOT READY'}
@@ -342,6 +365,37 @@ function ProfileModal({ open, onClose, leaderboard }) {
 
   if (!open) return null;
   const recent = stats?.recentMatches || [];
+  const tier = rankTier(rankedProfile?.rating);
+  const phase = ratingPhase(rankedProfile);
+  const progressPct = Math.max(0, Math.min(100, Math.round(phase.progress * 100)));
+  const leaderboardRank = rankedProfile
+    ? (leaderboard || []).find((entry) => entry.name === rankedProfile.name && entry.rating === rankedProfile.rating)?.rank
+    : null;
+  const profileName = authUser?.name || rankedProfile?.name || 'PLAYER';
+  const rankedSummary = [
+    ['Rating', rankedProfile?.rating ?? '—'],
+    ['Rank', leaderboardRank ? `#${leaderboardRank}` : '—'],
+    ['Record', rankedProfile ? `${rankedProfile.wins}-${rankedProfile.losses}` : '—'],
+    ['Ranked games', rankedProfile?.gamesPlayed ?? 0],
+  ];
+  const statSummary = stats
+    ? [
+        ['Matches', stats.matches],
+        ['Win rate', pct(stats.winRate)],
+        ['Points', `${stats.pointsWon}-${stats.pointsLost}`],
+        ['Point rate', pct(stats.pointWinRate)],
+        ['Shots', stats.shots],
+        ['Smashes', stats.smashes],
+        ['Fastest speed', statNumber(stats.fastestShotSpeed, 1)],
+        ['Average speed', statNumber(stats.avgShotSpeed, 1)],
+        ['Aces', stats.aces],
+        ['Winners', stats.winners],
+        ['Faults committed', stats.faultsCommitted],
+        ['Faults drawn', stats.faultsDrawn],
+        ['Longest rally', stats.longestRally],
+        ['Average rally', statNumber(stats.avgRally, 1)],
+      ]
+    : [];
   const play = async (matchId, viewerSide = 'p1') => {
     try {
       await replayGame.load(matchId, authToken, viewerSide);
@@ -350,62 +404,93 @@ function ProfileModal({ open, onClose, leaderboard }) {
     }
   };
   return (
-    <div className="fixed inset-0 z-20 grid place-items-center bg-background/50 p-6 backdrop-blur-sm" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
-      <section className={cn(glassPanel, 'grid max-h-[88vh] w-[min(1040px,94vw)] gap-4 overflow-auto')}>
-        <header className="flex items-center justify-between gap-4">
-          <div>
+    <div className="fixed inset-0 z-20 grid place-items-center bg-background/50 p-4 backdrop-blur-sm sm:p-6" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <section className={cn(glassPanel, 'grid max-h-[88vh] w-[min(1040px,94vw)] gap-5 overflow-auto')}>
+        <header className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
             <span className={labelText}>PLAYER PROFILE</span>
-            <h2 className="mt-1 text-3xl font-medium tracking-[0.12em]">{authUser?.name || 'PLAYER'}</h2>
+            <h2 className="mt-1 break-all text-3xl font-medium tracking-[0.12em]">{profileName}</h2>
           </div>
           <Button variant="outline" size="sm" onClick={onClose}>CLOSE</Button>
         </header>
-        <div className="grid grid-cols-3 gap-3">
-          <div className={statBox}>
-            <span className={labelText}>RATING</span>
-            <b>{rankedProfile?.rating ?? '—'}</b>
+
+        <Separator />
+
+        <section className="grid gap-4">
+          <div className="grid gap-4 rounded-2xl border bg-background/60 p-4 md:grid-cols-[1fr_220px] md:items-center">
+            <div className="grid gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="default">{tier.name}</Badge>
+                <span className="text-3xl font-medium tabular-nums">{rankedProfile?.rating ?? '—'}</span>
+                <span className="text-sm text-muted-foreground">ELO</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                {rankedSummary.slice(1).map(([label, value]) => (
+                  <span className="whitespace-nowrap" key={label}>
+                    <span className="text-muted-foreground">{label}:</span> <b>{value}</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <b>{phase.label}</b>
+                <span className="text-muted-foreground">K={phase.k}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progressPct}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground">{phase.detail}. Wins vs stronger players pay more; losses vs lower players cost more.</p>
+            </div>
           </div>
-          <div className={statBox}>
-            <span className={labelText}>RECORD</span>
-            <b>{rankedProfile ? `${rankedProfile.wins}-${rankedProfile.losses}` : '—'}</b>
-          </div>
-          <div className={statBox}>
-            <span className={labelText}>RANKED</span>
-            <b>{rankedProfile?.gamesPlayed ?? 0}</b>
-          </div>
-        </div>
-        {busy && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">LOADING PROFILE...</div>}
-        {error && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-destructive">{error}</div>}
+          {busy && <div className="py-2 text-xs font-medium tracking-[0.2em] text-muted-foreground">LOADING PROFILE...</div>}
+          {error && <div className="py-2 text-xs font-medium tracking-[0.2em] text-destructive">{error}</div>}
+        </section>
+
         {stats && (
           <>
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-3">
-              <div className={statBox}><span className={labelText}>MATCHES</span><b>{stats.matches}</b></div>
-              <div className={statBox}><span className={labelText}>WIN RATE</span><b>{pct(stats.winRate)}</b></div>
-              <div className={statBox}><span className={labelText}>POINTS</span><b>{stats.pointsWon}-{stats.pointsLost}</b></div>
-              <div className={statBox}><span className={labelText}>POINT RATE</span><b>{pct(stats.pointWinRate)}</b></div>
-              <div className={statBox}><span className={labelText}>SHOTS</span><b>{stats.shots}</b></div>
-              <div className={statBox}><span className={labelText}>SMASHES</span><b>{stats.smashes}</b></div>
-              <div className={statBox}><span className={labelText}>FASTEST</span><b>{statNumber(stats.fastestShotSpeed, 1)}</b></div>
-              <div className={statBox}><span className={labelText}>AVG SPEED</span><b>{statNumber(stats.avgShotSpeed, 1)}</b></div>
-              <div className={statBox}><span className={labelText}>ACES</span><b>{stats.aces}</b></div>
-              <div className={statBox}><span className={labelText}>WINNERS</span><b>{stats.winners}</b></div>
-              <div className={statBox}><span className={labelText}>FAULTS</span><b>{stats.faultsCommitted}</b></div>
-              <div className={statBox}><span className={labelText}>DRAWN</span><b>{stats.faultsDrawn}</b></div>
-              <div className={statBox}><span className={labelText}>LONGEST</span><b>{stats.longestRally}</b></div>
-              <div className={statBox}><span className={labelText}>AVG RALLY</span><b>{statNumber(stats.avgRally, 1)}</b></div>
-            </div>
-            <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(240px,.75fr)] gap-4">
-              <section className="grid gap-3 rounded-2xl border bg-background/60 p-4">
-                <h3 className={labelText}>RECENT REPLAYS</h3>
-                <div className="grid gap-2">
+            <Separator />
+
+            <section className="grid gap-3">
+              <h3 className={labelText}>STATS</h3>
+              <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm md:grid-cols-3 lg:grid-cols-4">
+                {statSummary.map(([label, value]) => (
+                  <div className="grid grid-cols-[1fr_auto] gap-3 border-b pb-1" key={label}>
+                    <dt className="truncate text-muted-foreground">{label}</dt>
+                    <dd className="font-medium tabular-nums">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            <section className="grid gap-3 rounded-2xl border bg-background/50 p-4">
+              <h3 className={labelText}>RATING RULES</h3>
+              <div className="grid gap-3 text-sm md:grid-cols-3">
+                <p><b>Placement moves fast.</b><br /><span className="text-muted-foreground">First 10 ranked games use bigger swings so your rating finds your skill sooner.</span></p>
+                <p><b>Upsets matter.</b><br /><span className="text-muted-foreground">Beat higher-rated players for bigger gains. Lose to lower-rated players for bigger drops.</span></p>
+                <p><b>Top ranks tighten.</b><br /><span className="text-muted-foreground">At 1500+ and 1800+, changes shrink so elite rating feels earned and stable.</span></p>
+              </div>
+            </section>
+
+            <Separator />
+
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <section className="grid gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className={labelText}>RECENT MATCHES</h3>
+                  <span className="text-xs text-muted-foreground">{recent.length} shown</span>
+                </div>
+                <div className="grid gap-0 divide-y text-sm">
                   {recent.length === 0 && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">NO MATCHES YET</div>}
                   {recent.map((item) => {
                     const match = item.match;
                     const won = match.winner === item.viewerSide;
                     return (
-                      <div className={cn('grid grid-cols-[92px_1fr_auto_auto] items-center gap-2 rounded-2xl border bg-background/70 p-3 text-xs shadow-sm', won ? 'border-primary/30' : 'border-border')} key={match.id}>
-                        <span className="text-[10px] font-medium tracking-[0.12em] text-muted-foreground">{formatReplayDate(match.endedAt || match.startedAt)}</span>
-                        <b className="truncate tracking-[0.08em]">{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
-                        <em className="text-[10px] not-italic tracking-[0.12em] text-muted-foreground">{item.stats.winners} W · {item.stats.smashes} S · {item.stats.longestRally} R</em>
+                      <div className="grid gap-2 py-3 md:grid-cols-[44px_96px_minmax(0,1fr)_180px_auto] md:items-center" key={match.id}>
+                        <Badge variant={won ? 'default' : 'secondary'}>{won ? 'W' : 'L'}</Badge>
+                        <span className="text-xs text-muted-foreground">{formatReplayDate(match.endedAt || match.startedAt)}</span>
+                        <b className="min-w-0 truncate tracking-[0.06em]">{match.p1Name} {match.p1Score}—{match.p2Score} {match.p2Name}</b>
+                        <span className="text-xs text-muted-foreground">{item.stats.winners} winners · {item.stats.smashes} smashes · {item.stats.longestRally} rally</span>
                         <Button variant="outline" size="sm" disabled={!item.replayReady || replayStatus === 'loading'} onClick={() => play(match.id, item.viewerSide)}>
                           {item.replayReady ? 'PLAY' : 'NO REPLAY'}
                         </Button>
@@ -414,14 +499,18 @@ function ProfileModal({ open, onClose, leaderboard }) {
                   })}
                 </div>
               </section>
-              <section className="grid gap-3 rounded-2xl border bg-background/60 p-4">
-                <h3 className={labelText}>FULL LEADERBOARD</h3>
-                <div className="grid max-h-[360px] gap-1 overflow-auto pr-1">
+
+              <section className="grid content-start gap-3">
+                <h3 className={labelText}>LEADERBOARD</h3>
+                <div className="grid max-h-[380px] gap-0 divide-y overflow-auto pr-1 text-sm">
                   {(leaderboard || []).map((entry, index) => (
-                    <div className="grid grid-cols-[40px_1fr_56px] items-center gap-2 text-xs" key={`${entry.rank}-${entry.name}-${index}`}>
+                    <div className="grid grid-cols-[44px_1fr_56px] items-center gap-2 py-2" key={`${entry.rank}-${entry.name}-${index}`}>
                       <span className="text-muted-foreground">#{entry.rank}</span>
-                      <b className="truncate">{entry.name}</b>
-                      <em className="not-italic text-muted-foreground">{entry.rating}</em>
+                      <span className="min-w-0">
+                        <b className="block truncate">{entry.name}</b>
+                        <span className="text-xs text-muted-foreground">{entry.wins}-{entry.losses} · {entry.gamesPlayed} games</span>
+                      </span>
+                      <em className="text-right not-italic tabular-nums text-muted-foreground">{entry.rating}</em>
                     </div>
                   ))}
                   {(!leaderboard || leaderboard.length === 0) && <div className="py-4 text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">NO RANKED MATCHES YET</div>}
@@ -509,6 +598,7 @@ export function ModePicker() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState(playerName);
   const [busy, setBusy] = useState(false);
   const joinAttemptedCode = useRef('');
   const run = async (fn) => {
@@ -523,6 +613,15 @@ export function ModePicker() {
     }
   };
   const updateCode = (value) => setCode(value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5));
+  const updateNameDraft = (value) => setNameDraft(value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12));
+  useEffect(() => {
+    setNameDraft(playerName);
+  }, [playerName]);
+  useEffect(() => {
+    if (nameDraft === playerName) return;
+    const timeout = setTimeout(() => setPlayerName(nameDraft), 350);
+    return () => clearTimeout(timeout);
+  }, [nameDraft, playerName, setPlayerName]);
   useEffect(() => {
     networkGame.refreshLeaderboard().catch(() => {});
   }, []);
@@ -542,6 +641,8 @@ export function ModePicker() {
     joinAttemptedCode.current = code;
     run(() => networkGame.joinPrivate(code));
   }, [code, busy]);
+  const tier = rankTier(rankedProfile?.rating);
+  const phase = ratingPhase(rankedProfile);
   const showTestAi = import.meta.env.DEV || DEBUG_MODE;
   if (started || !revealed) return null;
   return (
@@ -551,8 +652,9 @@ export function ModePicker() {
       <div className={row}>
         <Input
           className="w-48 text-center font-medium uppercase tracking-[0.18em]"
-          value={playerName}
-          onChange={(event) => setPlayerName(event.target.value)}
+          value={nameDraft}
+          onChange={(event) => updateNameDraft(event.target.value)}
+          onBlur={() => nameDraft !== playerName && setPlayerName(nameDraft)}
           placeholder="NAME"
           maxLength={12}
           aria-label="player name"
@@ -561,9 +663,16 @@ export function ModePicker() {
       <div className="grid gap-3 border-y py-3">
         {authUser ? (
           <>
-            <div className="flex items-center justify-center gap-3 text-xs">
+            <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
               <b>{authUser.name}</b>
-              <span className="text-muted-foreground">{rankedProfile ? `${rankedProfile.rating} ELO · ${rankedProfile.wins}-${rankedProfile.losses}` : 'RANK LOADING'}</span>
+              {rankedProfile ? (
+                <>
+                  <Badge variant="secondary">{tier.name}</Badge>
+                  <span className="text-muted-foreground">{rankedProfile.rating} ELO · {rankedProfile.wins}-{rankedProfile.losses} · {phase.label}</span>
+                </>
+              ) : (
+                <span className="text-muted-foreground">RANK LOADING</span>
+              )}
             </div>
             <div className={row}>
               <Button variant="outline" size="sm" onClick={() => setProfileOpen(true)} disabled={busy}>PROFILE</Button>
@@ -595,7 +704,12 @@ export function ModePicker() {
         <Input className="w-28 text-center uppercase tracking-[0.18em]" value={code} onChange={(event) => updateCode(event.target.value)} placeholder="CODE" maxLength={5} />
       </div>
       {networkStatus === 'connecting' && <div className="text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">CONNECTING...</div>}
-      {networkStatus === 'waiting' && <div className="text-center text-xs font-medium tracking-[0.2em] text-muted-foreground">SEARCHING{rankedQueueCount ? ` · ${rankedQueueCount}/2` : ''}</div>}
+      {networkStatus === 'waiting' && (
+        <div className="flex items-center justify-center gap-2 text-xs font-medium tracking-[0.2em] text-muted-foreground">
+          <Spinner className="size-3" />
+          <span>SEARCHING{rankedQueueCount ? ` · ${rankedQueueCount}/2` : ''}</span>
+        </div>
+      )}
       {networkError && <div className="text-center text-xs font-medium tracking-[0.2em] text-destructive">{networkError}</div>}
       <div className="grid gap-2 rounded-2xl border bg-background/60 p-3">
         <div className={cn(labelText, 'text-center')}>TOP 3</div>
@@ -691,7 +805,7 @@ export function Hud() {
               <i className={cn('size-1.5 rounded-full bg-border', server === 'ai' && 'bg-primary shadow-lg')} />
             </div>
           </div>
-          {serveMessage && <div className="absolute left-1/2 top-[63%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium tracking-[0.34em] text-foreground">{serveMessage}</div>}
+          {serveMessage && <div className="absolute left-1/2 top-[63%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap text-xs font-medium tracking-[0.34em] text-muted-foreground">{serveMessage}</div>}
           {flashText && phase !== 'over' && (
             <div key={flashId} className="pointer-events-none absolute left-1/2 top-1/3 whitespace-nowrap text-5xl font-medium tracking-[0.14em] [animation:hudPop_1s_cubic-bezier(.2,1.3,.3,1)_forwards]" style={{ color: flashColor, textShadow: `0 0 30px ${flashColor}55` }}>
               {flashText}
@@ -809,9 +923,9 @@ export function PointerCursor() {
   );
 }
 
-const loadedExitMinMs = 2400;
-const maxIntroMs = 10000;
-const introRemoveDelayMs = 1100;
+const loadedExitMinMs = 700;
+const maxIntroMs = 3000;
+const introRemoveDelayMs = 350;
 
 export function IntroOverlay() {
   const { active, progress } = useProgress();
@@ -845,10 +959,10 @@ export function IntroOverlay() {
   if (removed) return null;
 
   return (
-    <div className={cn('fixed inset-0 z-[9] flex items-center justify-center bg-background transition-opacity duration-1000', leaving && 'pointer-events-none opacity-0')}>
+    <div className={cn('fixed inset-0 z-[9] flex items-center justify-center bg-background transition-opacity duration-300', leaving && 'pointer-events-none opacity-0')}>
       <div className="flex pl-[0.34em] text-[clamp(64px,10vw,150px)] font-semibold tracking-[0.34em] text-foreground" aria-label="BACKSPIN">
         {'BACKSPIN'.split('').map((letter, index) => (
-          <span key={index} className="opacity-0 [animation:introGlyph_1s_cubic-bezier(.16,.7,.2,1)_forwards]" style={{ animationDelay: `${0.25 + index * 0.09}s` }}>{letter}</span>
+          <span key={index} className="opacity-0 [animation:introGlyph_400ms_cubic-bezier(.16,.7,.2,1)_forwards]" style={{ animationDelay: `${0.06 + index * 0.035}s` }}>{letter}</span>
         ))}
       </div>
     </div>

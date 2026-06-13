@@ -1,6 +1,9 @@
 import { Room, Client, ServerError, ErrorCode } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
 import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, getEmote, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
+import { getBot, makeBrain, resetBrain, updateBrain, resolveBotServe, resolveBotReturn, resolveBotPaddleTarget } from "../shared/backspin-bot.js";
+import { otherSide as sharedOtherSide, currentServer as sharedCurrentServer, pointQuality as sharedPointQuality, resolveBouncePoint, resolveOutPoint } from "../shared/backspin-rules.js";
+import { applyStateBounce, detectStateNet, detectStateRacketContact, isStateBallOnTable, stepBallState } from "../shared/backspin-physics.js";
 import { authUserFromToken, type AuthUser } from "../auth/config.js";
 import { rankedStore } from "../ranked/store.js";
 import { MatchReplayRecorder } from "../matches/MatchReplayRecorder.js";
@@ -19,17 +22,11 @@ const EMOTE_COOLDOWN_MS = 800;
 type Side = "p1" | "p2";
 type BotDifficulty = "rookie" | "pro" | "master";
 type Input = { targetX: number; targetY: number; aimX: number; aimDepth: number; vx: number; vy: number; speed: number; charging: boolean; chargeStartedAt: number; lastInputAt: number };
-type BotConfig = { name: string; skill: number; paddleSpeed: number; error: number; spin: number; aggression: number; placement: number; serveSpin: number };
-
-const BOT_CONFIGS: Record<BotDifficulty, BotConfig> = {
-  rookie: { name: "ROOKIE", skill: 0.28, paddleSpeed: 7.6, error: 0.17, spin: 0.2, aggression: 0.14, placement: 0.22, serveSpin: 0.22 },
-  pro: { name: "PRO", skill: 0.68, paddleSpeed: 12.4, error: 0.055, spin: 0.68, aggression: 0.55, placement: 0.62, serveSpin: 0.78 },
-  master: { name: "MASTER", skill: 0.9, paddleSpeed: 15.5, error: 0.025, spin: 0.95, aggression: 0.82, placement: 0.85, serveSpin: 1 },
-};
+type BotConfig = ReturnType<typeof getBot>;
 const BOT_SESSION_ID = "$bot";
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const other = (side: Side): Side => side === "p1" ? "p2" : "p1";
+const other = (side: Side): Side => sharedOtherSide(side) as Side;
 const codeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 function makeCode() {
   let code = "";
@@ -54,6 +51,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private botEnabled = false;
   private botDifficulty: BotDifficulty = "pro";
   private botServeTimer = 0;
+  private botBrain = makeBrain();
   private replayElapsedMs = 0;
   private replay = new MatchReplayRecorder();
 
@@ -94,8 +92,8 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     return value === "rookie" || value === "master" ? value : "pro";
   }
 
-  private botConfig() {
-    return BOT_CONFIGS[this.botDifficulty] || BOT_CONFIGS.pro;
+  private botConfig(): BotConfig {
+    return getBot(this.botDifficulty);
   }
 
   private activePlayerCount() {
@@ -258,6 +256,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.pointSeq += 1;
     this.state.p1X = 0;
     this.state.p2X = 0;
+    resetBrain(this.botBrain);
     for (const input of this.inputs.values()) {
       input.targetX = 0;
       input.targetY = 0;
@@ -298,9 +297,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   }
 
   private currentServer(): Side {
-    const total = this.state.scoreP1 + this.state.scoreP2;
-    const bucket = this.state.scoreP1 >= 10 && this.state.scoreP2 >= 10 ? total : Math.floor(total / 2);
-    return bucket % 2 === 0 ? this.firstServer : other(this.firstServer);
+    return sharedCurrentServer(this.firstServer, this.state.scoreP1, this.state.scoreP2, sharedOtherSide) as Side;
   }
 
   private resetServe() {
@@ -333,13 +330,25 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.ballX = x;
     this.state.ballY = PADDLE_Y + 0.34;
     this.state.ballZ = side === "p1" ? PADDLE_Z.p1 - 0.45 : PADDLE_Z.p2 + 0.45;
+    const botServing = this.botEnabled && side === "p2";
     const top = clamp(((input?.vy || 0) * 0.18) + charge * 0.25, -0.8, 0.8);
     const sideSpin = clamp((input?.vx || 0) * 0.12, -0.8, 0.8);
     const aimX = input?.aimX || 0;
     const aimDepth = input?.aimDepth ?? 0.5;
     const targetX = clamp(aimX * TABLE.halfWidth * 0.96 + sideSpin * TABLE.halfWidth * 0.22, -TABLE.halfWidth * 0.98, TABLE.halfWidth * 0.98);
     const targetZ = zDir * (0.08 + aimDepth * 0.88) * TABLE.halfLength;
-    const shot = solveLegalServe({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin, side);
+    const shot = botServing
+      ? resolveBotServe({
+          side,
+          ball: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ },
+          bot: this.botConfig(),
+          brain: this.botBrain,
+          botScore: this.state.scoreP2,
+          opponentScore: this.state.scoreP1,
+          opponentX: this.state.p1X,
+          random: Math.random,
+        })
+      : solveLegalServe({ x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ }, targetX, targetZ, 0.72 - charge * 0.16, top, sideSpin, side);
     const v = shot.velocity;
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
     this.state.spinTop = shot.topSpin; this.state.spinSide = shot.sideSpin;
@@ -373,25 +382,40 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const incomingVelocity = { x: this.state.ballVx, y: this.state.ballVy, z: this.state.ballVz };
     const offset = clamp((this.state.ballX - paddleX) / REACH, -1, 1);
     this.state.exchange += 1;
-    const shot = resolvePlayerShot(
-      {
-        side,
-        ball: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ },
-        incomingVelocity,
-        offset,
-        exchange: this.state.exchange,
-      },
-      {
-        charge,
-        chargeHeldMs: input?.charging ? Math.max(0, (nowSeconds() - input.chargeStartedAt) * 1000) : 0,
-        charging: Boolean(input?.charging),
-        swipeX: input?.vx || 0,
-        swipeY: input?.vy || 0,
-        aimX: input?.aimX || 0,
-        aimDepth: input?.aimDepth ?? 0.5,
-      },
-      { random: Math.random },
-    );
+    const botHitting = this.botEnabled && side === "p2";
+    const shot: any = botHitting
+      ? resolveBotReturn({
+          side,
+          ball: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ },
+          incomingVelocity,
+          exchange: this.state.exchange,
+          bot: this.botConfig(),
+          brain: this.botBrain,
+          botScore: this.state.scoreP2,
+          opponentScore: this.state.scoreP1,
+          opponentX: this.state.p1X,
+          opponentVx: this.inputs.get(this.state.p1)?.vx || 0,
+          random: Math.random,
+        })
+      : resolvePlayerShot(
+          {
+            side,
+            ball: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ },
+            incomingVelocity,
+            offset,
+            exchange: this.state.exchange,
+          },
+          {
+            charge,
+            chargeHeldMs: input?.charging ? Math.max(0, (nowSeconds() - input.chargeStartedAt) * 1000) : 0,
+            charging: Boolean(input?.charging),
+            swipeX: input?.vx || 0,
+            swipeY: input?.vy || 0,
+            aimX: input?.aimX || 0,
+            aimDepth: input?.aimDepth ?? 0.5,
+          },
+          { random: Math.random },
+        );
     const v = shot.velocity;
     this.state.ballVx = v.x; this.state.ballVy = v.y; this.state.ballVz = v.z;
     this.state.spinTop = shot.spin.top; this.state.spinSide = shot.spin.side;
@@ -408,13 +432,14 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       spinTop: shot.spin.top,
       spinSide: shot.spin.side,
       speed: Math.hypot(v.x, v.y, v.z),
-      intent: shot.intent,
+      intent: botHitting ? (shot.smash ? "smash" : shot.lob ? "lob" : "drive") : shot.intent,
       smash: shot.smash,
     }, this.replayElapsedMs);
     this.lastHitter = side;
     this.bouncedReceiver = false;
     if (side === "p1") this.state.p1Charge = 0; else this.state.p2Charge = 0;
-    this.broadcast("fx", { type: "hit", side, smash: shot.smash, intent: shot.intent }, { afterNextPatch: true });
+    const shotIntent = botHitting ? (shot.smash ? "smash" : shot.lob ? "lob" : "drive") : shot.intent;
+    this.broadcast("fx", { type: "hit", side, smash: shot.smash, intent: shotIntent }, { afterNextPatch: true });
   }
 
   private point(winner: Side, reason: string) {
@@ -426,6 +451,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.pointReason = reason;
     if (winner === "p1") this.state.scoreP1 += 1;
     else this.state.scoreP2 += 1;
+    if (this.botEnabled) updateBrain(this.botBrain, winner === "p2", sharedPointQuality(reason, this.state.exchange));
     this.replay.recordPoint({
       seq: this.state.pointSeq,
       winner,
@@ -468,10 +494,17 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   }
 
   private predictBotContactX() {
-    if (this.state.ballVz >= -0.01) return this.state.ballX * 0.35;
-    const t = (PADDLE_Z.p2 - this.state.ballZ) / this.state.ballVz;
-    if (!Number.isFinite(t) || t < 0 || t > 1.8) return this.state.ballX * 0.35;
-    return this.state.ballX + this.state.ballVx * t + this.state.spinSide * PHYSICS.magnus * 0.5 * t * t;
+    return resolveBotPaddleTarget({
+      side: "p2",
+      ball: { x: this.state.ballX, y: this.state.ballY, z: this.state.ballZ },
+      velocity: { x: this.state.ballVx, y: this.state.ballVy, z: this.state.ballVz },
+      spin: { top: this.state.spinTop, side: this.state.spinSide },
+      phase: this.state.phase,
+      lastHitter: this.lastHitter,
+      exchange: this.state.exchange,
+      bot: this.botConfig(),
+      currentX: this.state.p2X,
+    });
   }
 
   private updateBotInput(dt: number) {
@@ -556,72 +589,66 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const prevX = this.state.ballX;
     const prevY = this.state.ballY;
     const prevZ = this.state.ballZ;
-    this.state.ballVx += this.state.spinSide * PHYSICS.magnus * dt;
-    this.state.ballVy -= (30 + this.state.spinTop * 11) * dt;
-    this.state.ballX += this.state.ballVx * dt;
-    this.state.ballY += this.state.ballVy * dt;
-    this.state.ballZ += this.state.ballVz * dt;
+    stepBallState(this.state, dt);
 
-    if (Math.sign(prevZ) !== Math.sign(this.state.ballZ)) {
-      const t = (0 - prevZ) / (this.state.ballZ - prevZ || 0.000001);
-      const netY = prevY + (this.state.ballY - prevY) * t;
-      if (netY - TABLE.ballRadius * 0.4 <= TABLE.netHeight && this.lastHitter) {
-        this.state.ballZ = Math.sign(prevZ) * 0.06;
-        this.state.ballVz *= -0.12;
-        this.point(other(this.lastHitter), "NET");
-        return;
-      }
+    if (detectStateNet(prevZ, prevY, this.state) && this.lastHitter) {
+      this.state.ballZ = Math.sign(prevZ) * 0.06;
+      this.state.ballVz *= -0.12;
+      this.point(other(this.lastHitter), "NET");
+      return;
     }
 
     for (const side of ["p1", "p2"] as Side[]) {
       if (this.lastHitter === side || !this.bouncedReceiver) continue;
-      const racketZ = side === "p1" ? PADDLE_Z.p1 : PADDLE_Z.p2;
-      if (!(side === "p1" ? this.state.ballVz > 0 : this.state.ballVz < 0)) continue;
-      if ((prevZ - racketZ) * (this.state.ballZ - racketZ) > 0) continue;
-      const t = (racketZ - prevZ) / (this.state.ballZ - prevZ || 0.000001);
-      const x = prevX + (this.state.ballX - prevX) * t;
-      const y = prevY + (this.state.ballY - prevY) * t;
-      const px = side === "p1" ? this.state.p1X : this.state.p2X;
-      if (Math.abs(x - px) <= REACH && y >= 0.05 && y <= 3.4) {
-        this.state.ballX = x; this.state.ballY = y; this.state.ballZ = racketZ;
+      const contact = detectStateRacketContact({
+        side,
+        prevX,
+        prevY,
+        prevZ,
+        state: this.state,
+        racketX: side === "p1" ? this.state.p1X : this.state.p2X,
+        reach: REACH,
+      });
+      if (contact) {
+        this.state.ballX = contact.x; this.state.ballY = contact.y; this.state.ballZ = contact.z;
         this.hit(side);
         return;
       }
     }
 
     if (this.state.ballVy < 0 && this.state.ballY <= TABLE.ballRadius) {
-      if (Math.abs(this.state.ballX) <= TABLE.halfWidth && Math.abs(this.state.ballZ) <= TABLE.halfLength) {
-        const side = this.state.ballZ > 0 ? "p1" : "p2";
-        this.state.ballY = TABLE.ballRadius;
-        this.state.ballVy = Math.abs(this.state.ballVy) * TABLE.bounceRestitution * (1 - Math.max(this.state.spinTop, 0) * 0.18);
-        const zSign = Math.sign(this.state.ballVz) || 1;
-        this.state.ballVz += zSign * this.state.spinTop * PHYSICS.speedScale;
-        this.state.ballVx += this.state.spinSide * PHYSICS.curveScale;
-        this.state.spinTop *= 0.55;
-        this.state.spinSide *= 0.55;
+      if (isStateBallOnTable(this.state)) {
+        const { side } = applyStateBounce(this.state);
         this.broadcast("fx", { type: "bounce", x: this.state.ballX, z: this.state.ballZ }, { afterNextPatch: true });
-        if (this.lastHitter && this.state.exchange === 0) {
-          this.serveBounceCount += 1;
-          if (this.serveBounceCount === 1) {
-            if (side !== this.lastHitter) this.point(other(this.lastHitter), "FAULT");
-          } else if (this.serveBounceCount === 2) {
-            if (side === this.lastHitter) this.point(other(this.lastHitter), "FAULT");
-            else this.bouncedReceiver = true;
-          } else {
-            this.point(this.lastHitter, "WINNER");
-          }
-        } else if (this.lastHitter && side === this.lastHitter) this.point(other(this.lastHitter), "FAULT");
-        else if (this.bouncedReceiver && this.lastHitter) this.point(this.lastHitter, "WINNER");
-        else this.bouncedReceiver = true;
-      } else if (this.lastHitter) {
-        const serveFault = this.state.exchange === 0 && this.serveBounceCount < 2;
-        this.point(serveFault ? other(this.lastHitter) : this.bouncedReceiver ? this.lastHitter : other(this.lastHitter), serveFault ? "FAULT" : this.bouncedReceiver ? "WINNER" : "OUT");
+        const result = resolveBouncePoint({
+          side,
+          lastHitter: this.lastHitter,
+          exchange: this.state.exchange,
+          serveBounceCount: this.serveBounceCount,
+          bouncedReceiver: this.bouncedReceiver,
+        });
+        this.serveBounceCount = result.serveBounceCount ?? this.serveBounceCount;
+        this.bouncedReceiver = result.bouncedReceiver ?? this.bouncedReceiver;
+        if (result.winner) this.point(result.winner as Side, result.reason);
+      } else {
+        const result = resolveOutPoint({
+          lastHitter: this.lastHitter,
+          exchange: this.state.exchange,
+          serveBounceCount: this.serveBounceCount,
+          bouncedReceiver: this.bouncedReceiver,
+        });
+        if (result?.winner) this.point(result.winner as Side, result.reason);
       }
     }
 
-    if ((Math.abs(this.state.ballZ) > 8 || Math.abs(this.state.ballX) > 6 || this.state.ballY < -1.6) && this.lastHitter) {
-      const serveFault = this.state.exchange === 0 && this.serveBounceCount < 2;
-      this.point(serveFault ? other(this.lastHitter) : this.bouncedReceiver ? this.lastHitter : other(this.lastHitter), serveFault ? "FAULT" : this.bouncedReceiver ? "WINNER" : "OUT");
+    if (Math.abs(this.state.ballZ) > 8 || Math.abs(this.state.ballX) > 6 || this.state.ballY < -1.6) {
+      const result = resolveOutPoint({
+        lastHitter: this.lastHitter,
+        exchange: this.state.exchange,
+        serveBounceCount: this.serveBounceCount,
+        bouncedReceiver: this.bouncedReceiver,
+      });
+      if (result?.winner) this.point(result.winner as Side, result.reason);
     }
   }
 }

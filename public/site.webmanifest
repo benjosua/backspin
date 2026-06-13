@@ -1,8 +1,0 @@
-{
-  "name": "Backspin",
-  "short_name": "Backspin",
-  "description": "Minimalist 3D ping pong game experiment.",
-  "theme_color": "#efe7d8",
-  "background_color": "#efe7d8",
-  "display": "standalone"
-}

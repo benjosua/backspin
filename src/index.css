@@ -124,6 +124,13 @@
   body {
     @apply bg-background text-foreground;
     }
+  [data-slot="button"] {
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  [data-slot="input"] {
+    letter-spacing: 0.16em;
+  }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
     }

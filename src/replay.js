@@ -1,8 +1,9 @@
 import { MathUtils, Vector3 } from 'three';
-import { CAMERA } from './constants.js';
+import { CAMERA, TABLE } from './constants.js';
 import { arenaFx, clampDt, damp, decayFx, resetFx } from './fx-state.js';
 import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
+import { makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
 
 const replayDevBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
   ? `${window.location.protocol}//${window.location.hostname}:2567`
@@ -114,9 +115,6 @@ export async function fetchShotReplay(matchId, shotId, token) {
   return replayFetch(`/api/matches/${encodeURIComponent(matchId)}/shots/${encodeURIComponent(shotId)}/replay`, token);
 }
 
-function makeRacket(who, z) {
-  return { who, x: 0, y: 0.62, z, rotX: who === 'player' ? -0.22 : 0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: z, tell: 0 };
-}
 
 class ReplayGame {
   constructor() {
@@ -125,9 +123,9 @@ class ReplayGame {
     this.ball = new Vector3(0, 0.34, 0);
     this.vel = new Vector3();
     this.spin = { top: 0, side: 0 };
-    this.shadow = { x: 0, z: 0, op: 0, scale: 0.5 };
-    this.marker = { x: 0, z: 0, kickX: 0, kickZ: 0, op: 0, spin: 0, side: 0, smash: 0 };
-    this.aim = { x: 0, z: 0, op: 0, spinX: 0, spinY: 0, power: 0 };
+    this.shadow = makeShadow();
+    this.marker = makeMarker();
+    this.aim = makeAim();
     this.brain = { confidence: 0.5 };
     this.netWobble = 0;
     this.netRotX = 0;
@@ -289,15 +287,11 @@ class ReplayGame {
     this.vel.set(frame.velocity.x * flip, frame.velocity.y, frame.velocity.z * flip);
     this.spin.top = frame.spin.top;
     this.spin.side = frame.spin.side * flip;
-    this.shadow.x = this.ball.x;
-    this.shadow.z = this.ball.z;
-    const tableish = Math.abs(this.ball.x) < 3.25 && Math.abs(this.ball.z) < 5.15;
-    this.shadow.op = tableish ? clamp(0.45 - this.ball.y * 0.09, 0.1, 0.45) : 0;
-    this.shadow.scale = 0.5 + this.ball.y * 0.16;
+    updateShadow(this.shadow, this.ball, TABLE);
     inputHud.charge = this.player.tell;
     inputHud.charging = false;
     inputHud.exchange = frame.exchange || 0;
-    this.marker.op = 0;
+    resetMarker(this.marker);
     this.aim.op = 0;
 
     const match = this.playerRef?.replay?.match;

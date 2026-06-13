@@ -6,13 +6,12 @@ import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
 import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
 import { NET, getEmote, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
+import { predictBall as predictSharedBall } from '../shared/backspin-physics.js';
+import { makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
 
 const clamp = MathUtils.clamp;
-const SERVER_GRAVITY = 30;
-const SERVER_TOPSPIN_GRAVITY = 11;
 const SERVER_BALL_LEAD_MIN = 0.018;
 const SERVER_BALL_LEAD_MAX = 0.075;
-const SERVER_BALL_STEP = 1 / 120;
 const PADDLE_Y = 0.62;
 const devBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
   ? `${window.location.protocol}//${window.location.hostname}:2567`
@@ -96,9 +95,6 @@ client.auth.onChange(({ user, token }) => {
   refreshLeaderboard().catch(() => {});
 });
 
-function makeRacket(who, z) {
-  return { who, x: 0, y: 0.62, z, rotX: who === 'player' ? -0.22 : 0.22, rotZ: 0, vx: 0, prevX: 0, flash: 0, swing: 0, baseZ: z, tell: 0 };
-}
 
 class NetworkGame {
   constructor() {
@@ -124,9 +120,9 @@ class NetworkGame {
     this.brain = { confidence: 0.5 };
     this.ballRotX = 0;
     this.ballRotY = 0;
-    this.shadow = { x: 0, z: 0, op: 0, scale: 0.5 };
-    this.marker = { x: 0, z: 0, kickX: 0, kickZ: 0, op: 0, spin: 0, side: 0, smash: 0 };
-    this.aim = { x: 0, z: 0, op: 0, spinX: 0, spinY: 0, power: 0 };
+    this.shadow = makeShadow();
+    this.marker = makeMarker();
+    this.aim = makeAim();
     this.netWobble = 0;
     this.netRotX = 0;
     this.shake = 0;
@@ -459,27 +455,7 @@ class NetworkGame {
   }
 
   predictBall(ball, vel, seconds) {
-    let remaining = clamp(seconds, 0, SERVER_BALL_LEAD_MAX + 0.05);
-    while (remaining > 0) {
-      const step = Math.min(SERVER_BALL_STEP, remaining);
-      const prevY = ball.y;
-      vel.x += this.spin.side * PHYSICS.magnus * step;
-      vel.y -= (SERVER_GRAVITY + this.spin.top * SERVER_TOPSPIN_GRAVITY) * step;
-      ball.x += vel.x * step;
-      ball.y += vel.y * step;
-      ball.z += vel.z * step;
-      remaining -= step;
-
-      if (vel.y < 0 && prevY > TABLE.ballRadius && ball.y <= TABLE.ballRadius) {
-        if (Math.abs(ball.x) <= TABLE.halfWidth && Math.abs(ball.z) <= TABLE.halfLength) {
-          ball.y = TABLE.ballRadius;
-          vel.y = Math.abs(vel.y) * TABLE.bounceRestitution * (1 - Math.max(this.spin.top, 0) * 0.18);
-          const zSign = Math.sign(vel.z) || 1;
-          vel.z += zSign * this.spin.top * PHYSICS.speedScale;
-          vel.x += this.spin.side * PHYSICS.curveScale;
-        }
-      }
-    }
+    predictSharedBall(ball, vel, { top: this.spin.top, side: this.spin.side }, seconds, SERVER_BALL_LEAD_MAX + 0.05);
   }
 
   update(dt, time, camera, effects) {
@@ -567,11 +543,7 @@ class NetworkGame {
     }
     this.ballRotX -= (2 + this.spin.top * 16) * dt;
     this.ballRotY += this.spin.side * 14 * dt;
-    const tableish = Math.abs(this.ball.x) < 3.25 && Math.abs(this.ball.z) < 5.15;
-    this.shadow.x = this.ball.x;
-    this.shadow.z = this.ball.z;
-    this.shadow.op = tableish ? clamp(0.45 - this.ball.y * 0.09, 0.1, 0.45) : 0;
-    this.shadow.scale = 0.5 + this.ball.y * 0.16;
+    updateShadow(this.shadow, this.ball, TABLE);
     const aiming = store.phase === 'exchange' || (store.phase === 'serve' && store.server === 'player');
     this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
     this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
@@ -579,9 +551,7 @@ class NetworkGame {
     this.aim.spinX = inputHud.spinX;
     this.aim.spinY = inputHud.spinY;
     this.aim.power = this.charge;
-    this.marker.op = 0;
-    this.marker.spin = 0;
-    this.marker.smash = 0;
+    resetMarker(this.marker);
     const incoming = store.phase === 'exchange' && this.ball.z < PHYSICS.gravity && this.vel.z > 0;
     if (incoming && this.ball.y > TABLE.ballRadius) {
       const prediction = predictBounceKick(this.ball, this.vel, this.spin);
