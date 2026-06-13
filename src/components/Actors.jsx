@@ -200,15 +200,15 @@ function makeNetTexture() {
   canvas.height = 40;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = 'rgba(252,248,240,0.55)';
-  ctx.lineWidth = 1.5;
-  for (let x = 0; x <= canvas.width; x += 12) {
+  ctx.strokeStyle = 'rgba(244,250,251,0.7)';
+  ctx.lineWidth = 1.25;
+  for (let x = 0; x <= canvas.width; x += 18) {
     ctx.beginPath();
     ctx.moveTo(x + 0.5, 0);
     ctx.lineTo(x + 0.5, canvas.height);
     ctx.stroke();
   }
-  for (let y = 0; y <= canvas.height; y += 8) {
+  for (let y = 0; y <= canvas.height; y += 12) {
     ctx.beginPath();
     ctx.moveTo(0, y + 0.5);
     ctx.lineTo(canvas.width, y + 0.5);
@@ -223,6 +223,8 @@ const netWidth = TABLE.halfWidth * 2;
 const netDepth = 0.045;
 const postX = TABLE.halfWidth + 0.08;
 const topBarWidth = TABLE.halfWidth * 2 + 0.16;
+const netStripeYs = [0.2, 0.36];
+const netPastelStripe = '#8fcfde';
 
 const Net = forwardRef(function Net(_props, ref) {
   const cloth = useRef(null);
@@ -244,22 +246,22 @@ const Net = forwardRef(function Net(_props, ref) {
     <group ref={ref}>
       <mesh position={[0, TABLE.netHeight / 2, 0]}>
         <boxGeometry args={[netWidth, TABLE.netHeight, netDepth]} />
-        <meshBasicMaterial ref={cloth} map={texture} color={TUNING.net.color} transparent opacity={TUNING.net.opacity} depthWrite={false} side={DoubleSide} />
+        <meshBasicMaterial ref={cloth} map={texture} color="#f8fbf7" transparent opacity={0.88} depthWrite={false} side={DoubleSide} />
       </mesh>
+      {netStripeYs.map((y, index) => (
+        <mesh key={`net-stripe-${index}`} position={[0, y, netDepth / 2 + 0.006]} renderOrder={3}>
+          <boxGeometry args={[netWidth, 0.014, 0.008]} />
+          <meshBasicMaterial color={netPastelStripe} transparent opacity={0.9} depthWrite={false} />
+        </mesh>
+      ))}
       <mesh position={[0, TABLE.netHeight, 0]}>
         <boxGeometry args={[topBarWidth, 0.06, 0.04]} />
-        <meshStandardMaterial ref={(node) => { bars.current[0] = node; }} color={TUNING.net.color} roughness={0.55} metalness={0} />
+        <meshStandardMaterial ref={(node) => { bars.current[0] = node; }} color="#f8fbf7" roughness={0.55} metalness={0} />
       </mesh>
       {[-1, 1].map((side) => (
         <mesh key={side} position={[side * postX, (TABLE.netHeight + 0.04) / 2, 0]}>
           <cylinderGeometry args={[0.05, 0.055, TABLE.netHeight + 0.04, 18]} />
-          <meshStandardMaterial ref={(node) => { posts.current[side < 0 ? 0 : 1] = node; }} color={TUNING.net.color} roughness={0.6} metalness={0} />
-        </mesh>
-      ))}
-      {[-1, 1].map((side) => (
-        <mesh key={`cap-${side}`} position={[side * postX, TABLE.netHeight + 0.04, 0]}>
-          <sphereGeometry args={[0.06, 18, 12]} />
-          <meshStandardMaterial ref={(node) => { posts.current[side < 0 ? 2 : 3] = node; }} color={TUNING.net.color} roughness={0.55} metalness={0} />
+          <meshStandardMaterial ref={(node) => { posts.current[side < 0 ? 0 : 1] = node; }} color="#f8fbf7" roughness={0.6} metalness={0} />
         </mesh>
       ))}
     </group>

@@ -14,7 +14,6 @@ import { skyFragmentShader, skyVertexShader } from '../shaders.js';
 import { getDebugTime } from '../debug-tuning.js';
 
 const ktx2Loader = new KTX2Loader().setTranscoderPath('/basis/');
-const tableUrl = '/table-baked.glb';
 const environmentUrl = '/environment-baked.glb';
 
 function withKtx2(gl) {
@@ -212,7 +211,7 @@ export function ArenaRings() {
 }
 
 const tableGlow = new Color('#1689e8');
-const tableHot = new Color('#31a7ff');
+const tableHot = new Color('#d7f0f5');
 const tableTmp = new Color();
 const tableInset = 0.08;
 const tableHalfWidth = TABLE.halfWidth - tableInset;
@@ -223,6 +222,14 @@ const edgeLineWidth = 0.09;
 const centerLineWidth = 0.05;
 const lineX = tableHalfWidth - lineGap;
 const lineZ = tableHalfLength - lineGap;
+const tableTopThickness = 0.08;
+const tableLegHeight = Math.abs(floorY) - tableTopThickness;
+const tableLegRadius = 0.075;
+const tableLegX = TABLE.halfWidth - 0.42;
+const tableLegZ = TABLE.halfLength - 0.58;
+const tablePastelBlue = '#9fd5e5';
+const tablePastelSide = '#86c5d8';
+const tablePastelLeg = '#e9dfcf';
 
 function TableLine({ w, d, x, z, matRef }) {
   return (
@@ -233,7 +240,7 @@ function TableLine({ w, d, x, z, matRef }) {
         color={TUNING.table.lineColor}
         side={2}
         transparent
-        opacity={0.96}
+        opacity={0.78}
         toneMapped={false}
         depthWrite={false}
         polygonOffset
@@ -243,12 +250,20 @@ function TableLine({ w, d, x, z, matRef }) {
   );
 }
 
+function TableLeg({ x, z }) {
+  return (
+    <group position={[x, -tableLegHeight / 2 - tableTopThickness, z]}>
+      <mesh castShadow receiveShadow>
+        <cylinderGeometry args={[tableLegRadius, tableLegRadius, tableLegHeight, 16]} />
+        <meshStandardMaterial color={tablePastelLeg} roughness={0.78} metalness={0} />
+      </mesh>
+    </group>
+  );
+}
+
 export function TableModel() {
   const glow = useRef(null);
   const lines = useRef([]);
-  const { gl } = useThree();
-  const gltf = useGLTF(tableUrl, false, false, withKtx2(gl));
-  const scene = useMemo(() => cloneBasicScene(gltf.scene), [gltf.scene]);
 
   useFrame((_, delta) => {
     const dt = clampDt(delta);
@@ -257,13 +272,13 @@ export function TableModel() {
     const config = TUNING.table;
 
     if (glow.current) {
-      const target = Math.min(0.85, config.baseGlow * 0.12 + heat * config.heatGlow * 0.5 + flash * config.flashGlow * 0.5);
+      const target = Math.min(0.42, config.baseGlow * 0.06 + heat * config.heatGlow * 0.24 + flash * config.flashGlow * 0.2);
       glow.current.opacity = damp(glow.current.opacity, target, 10, dt);
-      tableTmp.set(config.emissive).lerp(tableHot.set(config.hot), Math.min(1, heat * 0.7 + smash * 0.5));
+      tableTmp.set(tablePastelBlue).lerp(tableHot, Math.min(1, heat * 0.7 + smash * 0.5));
       glow.current.color.lerp(tableTmp, 1 - Math.exp(dt * -10));
     }
 
-    const lineOpacity = 0.9 + heat * 0.06 + flash * config.lineGlow * 0.07;
+    const lineOpacity = 0.72 + heat * 0.04 + flash * config.lineGlow * 0.04;
     for (const line of lines.current) {
       if (!line) continue;
       line.color.set(config.lineColor);
@@ -273,14 +288,24 @@ export function TableModel() {
 
   return (
     <group>
-      <primitive object={scene} />
+      <mesh position={[0, -tableTopThickness / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[TABLE.halfWidth * 2, tableTopThickness, TABLE.halfLength * 2]} />
+        <meshStandardMaterial color={tablePastelBlue} roughness={0.64} metalness={0} />
+      </mesh>
+      <mesh position={[0, -tableTopThickness - 0.035, 0]} castShadow receiveShadow>
+        <boxGeometry args={[TABLE.halfWidth * 2 - 0.24, 0.07, TABLE.halfLength * 2 - 0.24]} />
+        <meshStandardMaterial color={tablePastelSide} roughness={0.68} metalness={0} />
+      </mesh>
+      {[-1, 1].flatMap((sx) => [-1, 1].map((sz) => (
+        <TableLeg key={`${sx}:${sz}`} x={sx * tableLegX} z={sz * tableLegZ} />
+      )))}
       <mesh position={[0, 0.009, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow renderOrder={0}>
         <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
         <shadowMaterial transparent opacity={0.18} />
       </mesh>
       <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
         <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
-        <meshBasicMaterial ref={glow} color={TUNING.table.emissive} transparent opacity={0} depthWrite={false} blending={2} toneMapped={false} />
+        <meshBasicMaterial ref={glow} color={tablePastelBlue} transparent opacity={0} depthWrite={false} blending={2} toneMapped={false} />
       </mesh>
       <TableLine w={edgeLineWidth} d={lineZ * 2} x={-lineX} z={0} matRef={(node) => { lines.current[0] = node; }} />
       <TableLine w={edgeLineWidth} d={lineZ * 2} x={lineX} z={0} matRef={(node) => { lines.current[1] = node; }} />
