@@ -109,6 +109,7 @@ class PostgresRankedStore implements RankedStore {
         losses integer NOT NULL DEFAULT 0,
         games_played integer NOT NULL DEFAULT 0
       );
+      CREATE INDEX IF NOT EXISTS ranked_profiles_leaderboard_idx ON ranked_profiles(rating DESC, wins DESC, games_played ASC);
       CREATE TABLE IF NOT EXISTS ranked_matches (
         room_id text PRIMARY KEY,
         match_id text NULL,

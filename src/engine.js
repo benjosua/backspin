@@ -17,7 +17,8 @@ import { initAudio, playBounce, playCharge, playHit, playMenu, playNet } from '.
 import { predictBounceKick, resolvePlayerShot, simulateReceiverContact, solveLegalServe, solveReachableShot } from '../shared/backspin-core.js';
 import { otherSide as sharedOtherSide, currentServer as sharedCurrentServer, pointQuality as sharedPointQuality, resolveBouncePoint, resolveOutPoint } from '../shared/backspin-rules.js';
 import { applyBounce, detectNet, detectRacketContact, stepBall } from '../shared/backspin-physics.js';
-import { makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
+import { applyMarkerPrediction, makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
+import { applyPointerVelocity, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
 import {
   makeBrain as makeSharedBrain,
   resetBrain as resetSharedBrain,
@@ -32,14 +33,6 @@ import {
 
 const clamp = MathUtils.clamp;
 const rand = () => Math.random();
-const browserNeedsPointerScale = (() => {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  const chromium = /Chrome|Chromium|Edg\//.test(ua);
-  const firefox = /Firefox/.test(ua);
-  return (/Apple/.test(navigator.vendor || '') && !chromium) || firefox;
-})();
-const pointerScale = () => (browserNeedsPointerScale && window.devicePixelRatio) || 1;
 const winVolleyTimes = [0.12, 0.5, 0.95, 1.55, 2.3];
 const ATTRACT_BOT_ID = 'master';
 const ATTRACT_RESET_DELAY = 1.35;
@@ -657,26 +650,8 @@ export class GameEngine {
 
   onPointerMove(event) {
     if (event.pointerType !== 'mouse' && event.pointerId !== this.movePID) return;
-    let x, y;
-    if (this.pointerLocked) {
-      const scale = pointerScale();
-      x = clamp(this.ndcX + (event.movementX * scale / window.innerWidth) * 2, -1, 1);
-      y = clamp(this.ndcY - (event.movementY * scale / window.innerHeight) * 2, -1, 1);
-    } else {
-      x = (event.clientX / window.innerWidth) * 2 - 1;
-      y = -(event.clientY / window.innerHeight) * 2 + 1;
-    }
-    const seconds = event.timeStamp / 1000;
-    const dt = seconds - this.lastT;
-    if (dt > 0 && dt < 0.1) {
-      this.pvx = this.pvx * 0.4 + ((x - this.lastNdcX) / dt) * 0.6;
-      this.pvy = this.pvy * 0.4 + ((y - this.lastNdcY) / dt) * 0.6;
-    }
-    this.lastT = seconds;
-    this.lastNdcX = x;
-    this.lastNdcY = y;
-    this.ndcX = x;
-    this.ndcY = y;
+    const { x, y } = pointerEventToNdc(event, this.ndcX, this.ndcY, this.pointerLocked);
+    applyPointerVelocity(this, event, x, y);
     this.syncCursorScreen();
   }
 
@@ -786,13 +761,7 @@ export class GameEngine {
       const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
       if (dir) this.inputX = clamp(this.inputX + dir * 19 * state.playerSpeed * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
 
-      if (camera) {
-        this.ndc.set(this.ndcX, this.ndcY);
-        this.ray.setFromCamera(this.ndc, camera);
-        if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
-          this.aimX = clamp(this.hit.x / (TABLE.halfWidth + 0.5), -1, 1);
-        }
-      }
+      updateAimFromCamera(this, camera, TABLE.halfWidth);
       this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
 
       player.x = damp(player.x, this.inputX, this.paddle.play.follow * 32 * state.playerSpeed, dt);
@@ -897,16 +866,7 @@ export class GameEngine {
     if (phase === 'exchange' && this.lastHitter === 'ai' && !this.bouncedReceiver) {
       resetMarker(this.marker);
       const prediction = predictBounceKick(ball, this.vel, this.spin);
-      if (prediction) {
-        this.marker.x = prediction.x;
-        this.marker.z = prediction.z;
-        this.marker.kickX = prediction.kickX;
-        this.marker.kickZ = prediction.kickZ;
-        this.marker.spin = prediction.spin;
-        this.marker.side = prediction.side;
-        this.marker.smash = prediction.smash;
-        this.marker.op = Math.abs(this.marker.x) < TABLE.halfWidth && Math.abs(this.marker.z) < TABLE.halfLength ? 0.32 + Math.sin(time * 10) * 0.08 : 0;
-      }
+      applyMarkerPrediction(this.marker, prediction, TABLE, time);
     } else {
       resetMarker(this.marker);
     }

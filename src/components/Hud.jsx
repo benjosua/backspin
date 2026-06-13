@@ -7,6 +7,7 @@ import { inputHud } from '../engine.js';
 import { fetchMyMatches, fetchMyStats, networkGame } from '../network.js';
 import { replayGame } from '../replay.js';
 import { DEBUG_MODE, RENDER_SCALES, useGameStore } from '../store.js';
+import { subscribeHudFrame } from '../hud-ticker.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -76,7 +77,6 @@ export function ChargeDial() {
   const aim = useRef(null);
 
   useEffect(() => {
-    let raf = 0;
     const tick = () => {
       if (arc.current) {
         arc.current.style.strokeDashoffset = dialCircumference * (1 - inputHud.charge);
@@ -104,10 +104,8 @@ export function ChargeDial() {
         aim.current.textContent = `AIM ${inputHud.aimLabel || 'CENTER · MID'} · SPIN ${Math.round(spin * 100)} · POWER ${Math.round(inputHud.charge * 100)}`;
         aim.current.style.opacity = inputHud.charging ? 0.95 : 0.35;
       }
-      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return subscribeHudFrame(tick);
   }, []);
 
   return (
@@ -140,8 +138,7 @@ export function EmoteBubbles() {
   }, [emotes]);
 
   useEffect(() => {
-    let raf = 0;
-    const place = (node, emote, racket, top) => {
+    const place = (node, emote, racket) => {
       if (!node || !emote) {
         if (node) node.style.opacity = '0';
         return;
@@ -154,25 +151,21 @@ export function EmoteBubbles() {
       const t = Math.max(0, Math.min(1, age / emoteLifeMs));
       const x = Math.max(-1, Math.min(1, (racket?.x || 0) / emotePaddleRange));
       node.textContent = emote.emoji;
-      node.style.left = `${50 + x * 23}%`;
-      node.style.top = top;
       node.style.opacity = String(Math.sin((1 - t) * Math.PI * 0.5));
-      node.style.transform = `translate(-50%, -50%) translateY(${-28 * t}px) scale(${0.82 + Math.sin(Math.min(1, t * 1.8) * Math.PI) * 0.22})`;
+      node.style.transform = `translate(calc(-50% + ${x * 23}vw), -50%) translateY(${-28 * t}px) scale(${0.82 + Math.sin(Math.min(1, t * 1.8) * Math.PI) * 0.22})`;
     };
     const tick = () => {
       const latest = emotesRef.current || {};
-      place(player.current, latest.player, networkGame.player, '67%');
-      place(opponent.current, latest.ai, networkGame.ai, '34%');
-      raf = requestAnimationFrame(tick);
+      place(player.current, latest.player, networkGame.player);
+      place(opponent.current, latest.ai, networkGame.ai);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return subscribeHudFrame(tick);
   }, []);
 
   return (
     <div className="pointer-events-none fixed inset-0 z-10" aria-hidden>
-      <div ref={player} className="absolute grid size-14 place-items-center rounded-full border bg-popover/90 text-3xl shadow-xl backdrop-blur-md" />
-      <div ref={opponent} className="absolute grid size-14 place-items-center rounded-full border bg-popover/90 text-3xl shadow-xl backdrop-blur-md" />
+      <div ref={player} className="absolute left-1/2 top-[67%] grid size-14 place-items-center rounded-full border bg-popover/90 text-3xl shadow-xl backdrop-blur-md" />
+      <div ref={opponent} className="absolute left-1/2 top-[34%] grid size-14 place-items-center rounded-full border bg-popover/90 text-3xl shadow-xl backdrop-blur-md" />
     </div>
   );
 }
@@ -824,25 +817,27 @@ export function Hud() {
       )}
 
       {started && menuOpen && phase !== 'over' && (
-        <div className={cn(glassPanel, 'absolute left-1/2 top-1/2 grid w-[min(420px,92vw)] -translate-x-1/2 -translate-y-1/2 gap-4')}>
-          <h3 className={cn(labelText, 'text-center')}>PAUSED</h3>
-          <ul className="grid gap-3 text-xs">
-            <li className="flex justify-between gap-4"><b>Move</b><span className="text-muted-foreground">{isCoarsePointer ? 'Drag' : 'A / D'}</span></li>
-            <li className="flex justify-between gap-4"><b>Aim landing</b><span className="text-muted-foreground">{isCoarsePointer ? 'Move across table' : 'Mouse'}</span></li>
-            <li className="flex justify-between gap-4"><b>Charge power</b><span className="text-muted-foreground">{isCoarsePointer ? 'Hold' : 'Hold mouse · Space'}</span></li>
-            <li className="flex justify-between gap-4"><b>Spin</b><span className="text-muted-foreground">{isCoarsePointer ? 'Flick at contact' : 'W / S'}</span></li>
-            <li className="flex justify-between gap-4"><b>Smash</b><span className="text-muted-foreground">Charge high ball</span></li>
-            <li className="flex justify-between gap-4"><b>Serve</b><span className="text-muted-foreground">Release</span></li>
-            {mode === 'online' && <li className="flex justify-between gap-4"><b>Emote</b><span className="text-muted-foreground">1 / 2 / 3 / 4</span></li>}
-            {!isCoarsePointer && <li className="flex justify-between gap-4"><b>Pause · back</b><span className="text-muted-foreground">Esc</span></li>}
-          </ul>
+        <div
+          className={cn(glassPanel, 'absolute left-1/2 top-1/2 grid w-[min(420px,92vw)] -translate-x-1/2 -translate-y-1/2 gap-4')}
+          onPointerDown={stop}
+          onPointerUp={stop}
+          onClick={stop}
+        >
+          <div className="grid justify-items-center gap-2 text-center">
+            <h3 className={labelText}>PAUSED</h3>
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              {isCoarsePointer ? 'DRAG · HOLD · RELEASE' : 'ESC · RESUME'}
+            </p>
+          </div>
           <Separator />
           <PlayerSpeedSetting />
           <PerformanceSettings />
           <Separator />
-          {mode !== 'online' && <Button variant="outline" size="sm" onClick={newGame}>RESTART&nbsp;GAME</Button>}
-          <Button variant="outline" size="sm" onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>EXIT&nbsp;TO&nbsp;LOBBY</Button>
-          <Button size="sm" onClick={toggleMenu}>RESUME</Button>
+          <div className="grid gap-2">
+            {mode !== 'online' && <Button variant="outline" size="sm" onClick={newGame}>RESTART&nbsp;GAME</Button>}
+            <Button variant="outline" size="sm" onClick={() => { if (mode === 'online') networkGame.disconnect(); else goHome(); }}>EXIT&nbsp;TO&nbsp;LOBBY</Button>
+            <Button size="sm" onClick={toggleMenu}>RESUME</Button>
+          </div>
         </div>
       )}
 
@@ -896,7 +891,6 @@ export function PointerCursor() {
   const ref = useRef(null);
 
   useEffect(() => {
-    let raf = 0;
     const tick = () => {
       const node = ref.current;
       if (node) {
@@ -905,10 +899,8 @@ export function PointerCursor() {
         const charge = inputHud.charging ? Math.max(0, Math.min(1, inputHud.charge)) : 0;
         node.style.setProperty('--cursor-accent-opacity', String(0.45 + charge * 0.25));
       }
-      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return subscribeHudFrame(tick);
   }, []);
   return (
     <div
@@ -923,9 +915,9 @@ export function PointerCursor() {
   );
 }
 
-const loadedExitMinMs = 700;
-const maxIntroMs = 3000;
-const introRemoveDelayMs = 350;
+const loadedExitMinMs = 250;
+const maxIntroMs = 900;
+const introRemoveDelayMs = 150;
 
 export function IntroOverlay() {
   const { active, progress } = useProgress();
@@ -959,10 +951,10 @@ export function IntroOverlay() {
   if (removed) return null;
 
   return (
-    <div className={cn('fixed inset-0 z-[9] flex items-center justify-center bg-background transition-opacity duration-300', leaving && 'pointer-events-none opacity-0')}>
+    <div className={cn('fixed inset-0 z-[9] flex items-center justify-center bg-background transition-opacity duration-150', leaving && 'pointer-events-none opacity-0')}>
       <div className="flex pl-[0.34em] text-[clamp(64px,10vw,150px)] font-semibold tracking-[0.34em] text-foreground" aria-label="BACKSPIN">
         {'BACKSPIN'.split('').map((letter, index) => (
-          <span key={index} className="opacity-0 [animation:introGlyph_400ms_cubic-bezier(.16,.7,.2,1)_forwards]" style={{ animationDelay: `${0.06 + index * 0.035}s` }}>{letter}</span>
+          <span key={index} className="opacity-0 [animation:introGlyph_180ms_cubic-bezier(.16,.7,.2,1)_forwards]" style={{ animationDelay: `${0.015 + index * 0.012}s` }}>{letter}</span>
         ))}
       </div>
     </div>

@@ -78,7 +78,7 @@ export function Lights() {
         intensity={TUNING.lighting.key}
         color={TUNING.lighting.keyColor}
         castShadow
-        shadow-mapSize={[512, 512]}
+        shadow-mapSize={[1024, 1024]}
         shadow-camera-left={-7}
         shadow-camera-right={7}
         shadow-camera-top={8}
@@ -147,7 +147,7 @@ export function ArenaRings() {
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.07, 0]} receiveShadow>
         <planeGeometry args={[14, 16]} />
-        <shadowMaterial transparent opacity={0.16} />
+        <shadowMaterial transparent opacity={0.18} />
       </mesh>
 
       <mesh
@@ -182,9 +182,6 @@ export function ArenaRings() {
   );
 }
 
-const tableGlow = new Color('#1689e8');
-const tableHot = new Color('#1b8ec2');
-const tableTmp = new Color();
 const tableInset = 0.08;
 const tableHalfWidth = TABLE.halfWidth - tableInset;
 const tableHalfLength = TABLE.halfLength - tableInset;
@@ -209,11 +206,10 @@ function TableLine({ w, d, x, z, matRef }) {
       <planeGeometry args={[w, d]} />
       <meshBasicMaterial
         ref={matRef}
-        color={TUNING.table.lineColor}
+        color="#e8dfcf"
         side={2}
         transparent
-        opacity={0.78}
-        toneMapped={false}
+        opacity={0.55}
         depthWrite={false}
         polygonOffset
         polygonOffsetFactor={-1}
@@ -234,7 +230,6 @@ function TableLeg({ x, z }) {
 }
 
 export function TableModel() {
-  const glow = useRef(null);
   const lines = useRef([]);
 
   useFrame((_, delta) => {
@@ -243,18 +238,11 @@ export function TableModel() {
     const flash = Math.max(pulse * 0.6, bounce, smash, score * 0.8);
     const config = TUNING.table;
 
-    if (glow.current) {
-      const target = Math.min(0.42, config.baseGlow * 0.06 + heat * config.heatGlow * 0.24 + flash * config.flashGlow * 0.2);
-      glow.current.opacity = damp(glow.current.opacity, target, 10, dt);
-      tableTmp.set(tablePastelBlue).lerp(tableHot, Math.min(1, heat * 0.7 + smash * 0.5));
-      glow.current.color.lerp(tableTmp, 1 - Math.exp(dt * -10));
-    }
-
-    const lineOpacity = 0.72 + heat * 0.04 + flash * config.lineGlow * 0.04;
+    const lineOpacity = 0.52 + heat * 0.03 + flash * config.lineGlow * 0.03;
     for (const line of lines.current) {
       if (!line) continue;
       line.color.set(config.lineColor);
-      line.opacity = damp(line.opacity, Math.min(1, lineOpacity), 12, dt);
+      line.opacity = damp(line.opacity, Math.min(0.7, lineOpacity), 12, dt);
     }
   });
 
@@ -274,10 +262,6 @@ export function TableModel() {
       <mesh position={[0, 0.009, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow renderOrder={0}>
         <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
         <shadowMaterial transparent opacity={0.18} />
-      </mesh>
-      <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
-        <planeGeometry args={[(tableHalfWidth - 0.06) * 2, (tableHalfLength - 0.06) * 2]} />
-        <meshBasicMaterial ref={glow} color={tablePastelBlue} transparent opacity={0} depthWrite={false} blending={2} toneMapped={false} />
       </mesh>
       <TableLine w={edgeLineWidth} d={lineZ * 2} x={-lineX} z={0} matRef={(node) => { lines.current[0] = node; }} />
       <TableLine w={edgeLineWidth} d={lineZ * 2} x={lineX} z={0} matRef={(node) => { lines.current[1] = node; }} />
@@ -310,7 +294,7 @@ function applyScoreText(node, config) {
   const color = node._fill || new Color();
   node._fill = color;
   node.color = boostedColor(color, config.scoreFill, config.scoreFillBoost);
-  node.outlineColor = config.scoreGlow;
+  node.outlineColor = config.scoreFill;
   node.fillOpacity = config.scoreFillOpacity;
   node.outlineWidth = percent(config.scoreOutlineWidth);
   node.outlineBlur = percent(config.scoreOutlineBlur);
@@ -466,24 +450,24 @@ export function WallScoreboard() {
     <group frustumCulled={false} visible={started}>
       <Text ref={playerScore} font={MONTSERRAT_FONT_URL} renderOrder={4} anchorX="center" anchorY="middle" characters={digitChars} depthOffset={-4}>
         {String(scoreP).padStart(2, '0')}
-        <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial transparent depthWrite={false} />
       </Text>
       <Text ref={cpuScore} font={MONTSERRAT_FONT_URL} renderOrder={4} anchorX="center" anchorY="middle" characters={digitChars} depthOffset={-4}>
         {String(scoreAI).padStart(2, '0')}
-        <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial transparent depthWrite={false} />
       </Text>
       <Text ref={roomCodeText} font={MONTSERRAT_FONT_URL} renderOrder={6} anchorX="center" anchorY="middle" characters={roomCodeChars} depthOffset={-6} visible={mode === 'online' && networkStatus === 'waiting' && !!roomCode}>
         {`ROOM ${roomCode}`}
-        <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial transparent depthWrite={false} />
       </Text>
       <group ref={labelGroup} position={[0, 0, 0]} renderOrder={5}>
         <Text ref={playerLabel} font={MONTSERRAT_FONT_URL} renderOrder={5} anchorX="center" anchorY="middle" characters={labelChars} depthOffset={-5}>
         {playerLabelText}
-          <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial transparent depthWrite={false} />
         </Text>
         <Text ref={cpuLabel} font={MONTSERRAT_FONT_URL} renderOrder={5} anchorX="center" anchorY="middle" characters={labelChars} depthOffset={-5}>
           {opponentLabel}
-          <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial transparent depthWrite={false} />
         </Text>
       </group>
     </group>

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { promisify } from "node:util";
+import { gzip, gunzip } from "node:zlib";
 import pg from "pg";
 
 export type Side = "p1" | "p2";
@@ -170,6 +171,8 @@ export interface MatchStore {
 
 const asIso = (value: Date | string | null | undefined) => value ? new Date(value).toISOString() : null;
 const roundInt = (value: number) => Math.max(0, Math.round(Number(value) || 0));
+const gzipBuffer = promisify(gzip);
+const gunzipBuffer = promisify(gunzip);
 
 function makeSummary(row: any): MatchSummary {
   return {
@@ -454,7 +457,7 @@ class PostgresMatchStore implements MatchStore {
 
   async addReplayChunk(input: ReplayChunkInput) {
     await this.init();
-    const data = gzipSync(Buffer.from(JSON.stringify(input.frames)));
+    const data = await gzipBuffer(Buffer.from(JSON.stringify(input.frames)));
     await this.pool.query(
       `INSERT INTO match_replay_chunks (match_id, chunk_index, start_ms, end_ms, frame_count, data)
        VALUES ($1,$2,$3,$4,$5,$6)
@@ -476,14 +479,14 @@ class PostgresMatchStore implements MatchStore {
     return { match: makeSummary(matchResult.rows[0]), stats: stats(points, shots), points, shots };
   }
 
-  private decodeReplayChunks(rows: any[]) {
-    return rows.map((row) => ({
+  private async decodeReplayChunks(rows: any[]) {
+    return Promise.all(rows.map(async (row) => ({
       matchId: row.match_id,
       chunkIndex: Number(row.chunk_index),
       startMs: Number(row.start_ms),
       endMs: Number(row.end_ms),
-      frames: JSON.parse(gunzipSync(row.data).toString("utf8")) as ReplayFrame[],
-    }));
+      frames: JSON.parse((await gunzipBuffer(row.data)).toString("utf8")) as ReplayFrame[],
+    })));
   }
 
   private async buildItemsFromRows(rows: any[], userId: string): Promise<UserStatsItem[]> {
@@ -526,24 +529,34 @@ class PostgresMatchStore implements MatchStore {
     const details = await this.getMatchDetails(matchId);
     if (!details) return null;
     const chunksResult = await this.pool.query("SELECT * FROM match_replay_chunks WHERE match_id = $1 ORDER BY chunk_index", [matchId]);
-    return { ...details, chunks: this.decodeReplayChunks(chunksResult.rows) };
+    return { ...details, chunks: await this.decodeReplayChunks(chunksResult.rows) };
   }
 
   async getShotReplay(matchId: string, shotId: string) {
-    const details = await this.getMatchDetails(matchId);
-    if (!details) return null;
-    const shot = details.shots.find((item) => item.id === shotId);
-    if (!shot) return null;
+    await this.init();
+    const [matchResult, shotResult] = await Promise.all([
+      this.pool.query("SELECT * FROM matches WHERE id = $1", [matchId]),
+      this.pool.query("SELECT * FROM match_shots WHERE match_id = $1 AND id = $2", [matchId, shotId]),
+    ]);
+    if (!matchResult.rows[0] || !shotResult.rows[0]) return null;
+    const match = makeSummary(matchResult.rows[0]);
+    const shot = makeShot(shotResult.rows[0]);
     const from = Math.max(0, shot.timeMs - 250);
-    const nextShot = details.shots.find((item) => item.seq === shot.seq + 1);
-    const nextPoint = details.points.find((item) => item.seq >= shot.pointSeq && item.timeMs > shot.timeMs);
-    const until = Math.min(nextShot?.timeMs ?? Number.POSITIVE_INFINITY, nextPoint?.timeMs ?? Number.POSITIVE_INFINITY, shot.timeMs + 3000);
+    const [nextShotResult, nextPointResult] = await Promise.all([
+      this.pool.query("SELECT time_ms FROM match_shots WHERE match_id = $1 AND seq = $2 LIMIT 1", [matchId, shot.seq + 1]),
+      this.pool.query("SELECT time_ms FROM match_points WHERE match_id = $1 AND seq >= $2 AND time_ms > $3 ORDER BY seq LIMIT 1", [matchId, shot.pointSeq, shot.timeMs]),
+    ]);
+    const until = Math.min(
+      Number(nextShotResult.rows[0]?.time_ms ?? Number.POSITIVE_INFINITY),
+      Number(nextPointResult.rows[0]?.time_ms ?? Number.POSITIVE_INFINITY),
+      shot.timeMs + 3000,
+    );
     const chunksResult = await this.pool.query(
       "SELECT * FROM match_replay_chunks WHERE match_id = $1 AND start_ms <= $2 AND end_ms >= $3 ORDER BY chunk_index",
       [matchId, until, from],
     );
-    const frames = this.decodeReplayChunks(chunksResult.rows).flatMap((chunk) => chunk.frames).filter((frame) => frame[0] >= from && frame[0] <= until);
-    return { match: details.match, shot, frames };
+    const frames = (await this.decodeReplayChunks(chunksResult.rows)).flatMap((chunk) => chunk.frames).filter((frame) => frame[0] >= from && frame[0] <= until);
+    return { match, shot, frames };
   }
 
   async listMatchesForUser(userId: string, limit: number, offset: number) {
@@ -703,20 +716,29 @@ class MemoryMatchStore implements MatchStore {
 
   async addPoint(input: PointInput) {
     const rows = this.points.get(input.matchId) || [];
-    if (!rows.some((row) => row.id === input.id)) rows.push({ ...input });
-    this.points.set(input.matchId, rows.sort((a, b) => a.seq - b.seq));
+    if (!rows.some((row) => row.id === input.id)) {
+      rows.push({ ...input });
+      if (rows.length > 1 && rows[rows.length - 2].seq > input.seq) rows.sort((a, b) => a.seq - b.seq);
+    }
+    this.points.set(input.matchId, rows);
   }
 
   async addShot(input: ShotInput) {
     const rows = this.shots.get(input.matchId) || [];
-    if (!rows.some((row) => row.id === input.id)) rows.push({ ...input, intent: input.intent || null, smash: Boolean(input.smash) });
-    this.shots.set(input.matchId, rows.sort((a, b) => a.seq - b.seq));
+    if (!rows.some((row) => row.id === input.id)) {
+      rows.push({ ...input, intent: input.intent || null, smash: Boolean(input.smash) });
+      if (rows.length > 1 && rows[rows.length - 2].seq > input.seq) rows.sort((a, b) => a.seq - b.seq);
+    }
+    this.shots.set(input.matchId, rows);
   }
 
   async addReplayChunk(input: ReplayChunkInput) {
     const rows = this.chunks.get(input.matchId) || [];
-    if (!rows.some((row) => row.chunkIndex === input.chunkIndex)) rows.push({ ...input, frames: input.frames.map((frame) => [...frame]) });
-    this.chunks.set(input.matchId, rows.sort((a, b) => a.chunkIndex - b.chunkIndex));
+    if (!rows.some((row) => row.chunkIndex === input.chunkIndex)) {
+      rows.push({ ...input, frames: input.frames.map((frame) => [...frame]) });
+      if (rows.length > 1 && rows[rows.length - 2].chunkIndex > input.chunkIndex) rows.sort((a, b) => a.chunkIndex - b.chunkIndex);
+    }
+    this.chunks.set(input.matchId, rows);
   }
 
   async getMatchDetails(matchId: string) {

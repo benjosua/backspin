@@ -3,8 +3,6 @@ import {
     defineRoom,
     monitor,
     playground,
-    createRouter,
-    createEndpoint,
 } from "colyseus";
 import { auth } from "@colyseus/auth";
 import express from "express";
@@ -57,19 +55,6 @@ const server = defineServer({
         backspin: defineRoom(BackspinRoom).filterBy(["mode"]),
         ranked_queue: defineRoom(RankedQueueRoom),
     },
-
-    /**
-     * Experimental: Define API routes. Built-in integration with the "playground" and SDK.
-     * 
-     * Usage from SDK: 
-     *   client.http.get("/api/hello").then((response) => {})
-     * 
-     */
-    routes: createRouter({
-        api_hello: createEndpoint("/api/hello", { method: "GET", }, async (ctx) => {
-            return { message: "Hello World" }
-        })
-    }),
 
     /**
      * Bind your custom express routes here:

@@ -1,6 +1,5 @@
 // Recovered entrypoint matching production bundle root render.
 
-import 'typeface-montserrat';
 import './index.css';
 import React from 'react';
 import { createRoot } from 'react-dom/client';

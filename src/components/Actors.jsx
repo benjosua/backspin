@@ -26,25 +26,7 @@ import { DEBUG_MODE, useGameStore } from '../store.js';
 import { paddleFragmentShader, paddleVertexShader } from '../shaders.js';
 import { createPaddleHeadShape, paddleHeadExtrude } from '../paddleShape.js';
 import { MONTSERRAT_FONT_URL } from '../fonts.js';
-
-function makeGlowTexture(rgb, strong = false) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-  const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-  if (strong) {
-    gradient.addColorStop(0, `rgba(${rgb},0.85)`);
-    gradient.addColorStop(0.55, `rgba(${rgb},0.45)`);
-    gradient.addColorStop(1, `rgba(${rgb},0)`);
-  } else {
-    gradient.addColorStop(0, `rgba(${rgb},0.8)`);
-    gradient.addColorStop(0.35, `rgba(${rgb},0.3)`);
-    gradient.addColorStop(1, `rgba(${rgb},0)`);
-  }
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 128, 128);
-  return new CanvasTexture(canvas);
-}
+import { makeGlowTexture } from '../three-textures.js';
 
 function makeRingTexture(rgb = '255,255,255') {
   const canvas = document.createElement('canvas');
@@ -172,7 +154,7 @@ const Ball = forwardRef(function Ball({ extraFx }, ref) {
   const ballMesh = (
     <mesh ref={mesh}>
       <sphereGeometry args={[TABLE.ballRadius, 24, 18]} />
-      <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.22} roughness={0.42} metalness={0} />
+      <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.08} roughness={0.48} metalness={0} />
     </mesh>
   );
   if (!extraFx) return <group ref={group}>{ballMesh}</group>;
@@ -203,7 +185,7 @@ function makeNetTexture() {
   canvas.height = 40;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = 'rgba(244,250,251,0.7)';
+  ctx.strokeStyle = 'rgba(216,210,196,0.58)';
   ctx.lineWidth = 1.25;
   for (let x = 0; x <= canvas.width; x += 18) {
     ctx.beginPath();
@@ -227,7 +209,7 @@ const netDepth = 0.045;
 const postX = TABLE.halfWidth + 0.08;
 const topBarWidth = TABLE.halfWidth * 2 + 0.16;
 const netStripeYs = [0.2, 0.36];
-const netPastelStripe = '#8fcfde';
+const netStripeColor = '#d8d2c4';
 
 const Net = forwardRef(function Net(_props, ref) {
   const cloth = useRef(null);
@@ -251,22 +233,32 @@ const Net = forwardRef(function Net(_props, ref) {
     <group ref={ref}>
       <mesh position={[0, TABLE.netHeight / 2, 0]}>
         <boxGeometry args={[netWidth, TABLE.netHeight, netDepth]} />
-        <meshBasicMaterial ref={cloth} map={texture} color="#f8fbf7" transparent opacity={0.88} depthWrite={false} side={DoubleSide} />
+        <meshStandardMaterial
+          ref={cloth}
+          map={texture}
+          color="#d8d2c4"
+          transparent
+          opacity={0.45}
+          roughness={0.9}
+          metalness={0}
+          depthWrite={false}
+          side={DoubleSide}
+        />
       </mesh>
       {netStripeYs.map((y, index) => (
         <mesh key={`net-stripe-${index}`} position={[0, y, netDepth / 2 + 0.006]} renderOrder={3}>
           <boxGeometry args={[netWidth, 0.014, 0.008]} />
-          <meshBasicMaterial color={netPastelStripe} transparent opacity={0.9} depthWrite={false} />
+          <meshStandardMaterial color={netStripeColor} transparent opacity={0.55} roughness={0.8} metalness={0} depthWrite={false} />
         </mesh>
       ))}
       <mesh position={[0, TABLE.netHeight, 0]}>
         <boxGeometry args={[topBarWidth, 0.06, 0.04]} />
-        <meshStandardMaterial ref={(node) => { bars.current[0] = node; }} color="#f8fbf7" roughness={0.55} metalness={0} />
+        <meshStandardMaterial ref={(node) => { bars.current[0] = node; }} color="#d8d2c4" roughness={0.75} metalness={0} />
       </mesh>
       {[-1, 1].map((side) => (
         <mesh key={side} position={[side * postX, (TABLE.netHeight + 0.04) / 2, 0]}>
           <cylinderGeometry args={[0.05, 0.055, TABLE.netHeight + 0.04, 18]} />
-          <meshStandardMaterial ref={(node) => { posts.current[side < 0 ? 0 : 1] = node; }} color="#f8fbf7" roughness={0.6} metalness={0} />
+          <meshStandardMaterial ref={(node) => { posts.current[side < 0 ? 0 : 1] = node; }} color="#d8d2c4" roughness={0.75} metalness={0} />
         </mesh>
       ))}
     </group>
@@ -566,7 +558,7 @@ const Effects = forwardRef(function Effects({ enabled }, ref) {
           visible={false}
         >
           +1
-          <meshBasicMaterial transparent depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial transparent depthWrite={false} />
         </Text>
       ))}
       <instancedMesh ref={confetti} args={[undefined, undefined, confettiCount]} frustumCulled={false}>
@@ -779,7 +771,7 @@ export function Actors() {
       ball.current.mesh.current.rotation.x = activeGame.ballRotX;
       ball.current.mesh.current.rotation.y = activeGame.ballRotY;
       const speed = activeGame.vel.length();
-      ball.current.mesh.current.material.emissiveIntensity = 0.22 + Math.min(speed / 26, 1) * 0.55;
+      ball.current.mesh.current.material.emissiveIntensity = 0.08 + Math.min(speed / 26, 1) * 0.18;
       const currentPhase = useGameStore.getState().phase;
       const serving = currentPhase === 'serve';
       if (serving !== (phase.current === 'serve')) trailAmount.current = 0;

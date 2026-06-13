@@ -47,3 +47,16 @@ export function resetMarker(marker) {
   marker.smash = 0;
   return marker;
 }
+
+export function applyMarkerPrediction(marker, prediction, table, time) {
+  if (!prediction) return marker;
+  marker.x = prediction.x;
+  marker.z = prediction.z;
+  marker.kickX = prediction.kickX;
+  marker.kickZ = prediction.kickZ;
+  marker.spin = prediction.spin;
+  marker.side = prediction.side;
+  marker.smash = prediction.smash;
+  marker.op = Math.abs(marker.x) < table.halfWidth && Math.abs(marker.z) < table.halfLength ? 0.32 + Math.sin(time * 10) * 0.08 : 0;
+  return marker;
+}

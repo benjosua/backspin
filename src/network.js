@@ -7,7 +7,8 @@ import { useGameStore } from './store.js';
 import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
 import { NET, getEmote, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
 import { predictBall as predictSharedBall } from '../shared/backspin-physics.js';
-import { makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
+import { applyMarkerPrediction, makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
+import { applyPointerVelocity, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
 
 const clamp = MathUtils.clamp;
 const SERVER_BALL_LEAD_MIN = 0.018;
@@ -19,14 +20,6 @@ const devBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
 const url = import.meta.env.VITE_COLYSEUS_URL || devBackendUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:2567');
 const client = new Client(url);
 const httpBase = String(url).replace(/^ws/i, 'http').replace(/\/$/, '');
-const browserNeedsPointerScale = (() => {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  const chromium = /Chrome|Chromium|Edg\//.test(ua);
-  const firefox = /Firefox/.test(ua);
-  return (/Apple/.test(navigator.vendor || '') && !chromium) || firefox;
-})();
-const pointerScale = () => (browserNeedsPointerScale && window.devicePixelRatio) || 1;
 const playerName = () => useGameStore.getState().playerName || 'PLAYER';
 const authHeader = () => (client.auth.token ? { Authorization: `Bearer ${client.auth.token}` } : {});
 const emoteKeyId = (code) => {
@@ -398,23 +391,8 @@ class NetworkGame {
     inputHud.cursorY = (1 - this.ndcY) * 0.5 * window.innerHeight;
   }
   onPointerMove(event) {
-    let x; let y;
-    if (this.pointerLocked) {
-      const scale = pointerScale();
-      x = clamp(this.ndcX + (event.movementX * scale / window.innerWidth) * 2, -1, 1);
-      y = clamp(this.ndcY - (event.movementY * scale / window.innerHeight) * 2, -1, 1);
-    } else {
-      x = (event.clientX / window.innerWidth) * 2 - 1;
-      y = -(event.clientY / window.innerHeight) * 2 + 1;
-    }
-    const seconds = event.timeStamp / 1000;
-    const dt = seconds - this.lastT;
-    if (dt > 0 && dt < 0.1) {
-      this.pvx = this.pvx * 0.4 + ((x - this.lastNdcX) / dt) * 0.6;
-      this.pvy = this.pvy * 0.4 + ((y - this.lastNdcY) / dt) * 0.6;
-    }
-    this.lastT = seconds;
-    this.lastNdcX = x; this.lastNdcY = y; this.ndcX = x; this.ndcY = y;
+    const { x, y } = pointerEventToNdc(event, this.ndcX, this.ndcY, this.pointerLocked);
+    applyPointerVelocity(this, event, x, y);
     this.syncCursorScreen();
   }
   onPointerDown(event) {
@@ -465,13 +443,7 @@ class NetworkGame {
     if (store.menuOpen && store.phase !== 'over') {
       decayFx(dt); inputHud.charging = false; return;
     }
-    if (camera) {
-      this.ndc.set(this.ndcX, this.ndcY);
-      this.ray.setFromCamera(this.ndc, camera);
-      if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
-        this.aimX = clamp(this.hit.x / (TABLE.halfWidth + 0.5), -1, 1);
-      }
-    }
+    updateAimFromCamera(this, camera, TABLE.halfWidth);
     const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
     if (dir) this.inputX = clamp(this.inputX + dir * 19 * store.playerSpeed * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
     this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
@@ -555,16 +527,7 @@ class NetworkGame {
     const incoming = store.phase === 'exchange' && this.ball.z < PHYSICS.gravity && this.vel.z > 0;
     if (incoming && this.ball.y > TABLE.ballRadius) {
       const prediction = predictBounceKick(this.ball, this.vel, this.spin);
-      if (prediction) {
-        this.marker.x = prediction.x;
-        this.marker.z = prediction.z;
-        this.marker.kickX = prediction.kickX;
-        this.marker.kickZ = prediction.kickZ;
-        this.marker.spin = prediction.spin;
-        this.marker.side = prediction.side;
-        this.marker.smash = prediction.smash;
-        this.marker.op = Math.abs(this.marker.x) < TABLE.halfWidth && Math.abs(this.marker.z) < TABLE.halfLength ? 0.32 + Math.sin(time * 10) * 0.08 : 0;
-      }
+      applyMarkerPrediction(this.marker, prediction, TABLE, time);
     }
     this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
     this.netRotX = Math.sin(time * 26) * this.netWobble * 0.1;

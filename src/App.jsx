@@ -3,6 +3,7 @@
 import { Suspense, lazy, useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Preload } from '@react-three/drei';
+import { ACESFilmicToneMapping } from 'three';
 import { DEBUG_MODE, useGameStore } from './store.js';
 import { CAMERA } from './constants.js';
 import { perfSettings, perfHudEnabled } from './performance.js';
@@ -36,6 +37,11 @@ function PerformanceRuntime() {
   const targetDpr = renderScaleDpr[renderScale] || renderScaleDpr.medium;
   const stats = useRef({ frames: 0, sum: 0, dpr: targetDpr, last: 0 });
   const hud = useRef(null);
+
+  useEffect(() => {
+    gl.toneMapping = ACESFilmicToneMapping;
+    gl.toneMappingExposure = 0.85;
+  }, [gl]);
 
   useEffect(() => {
     stats.current.dpr = targetDpr;
@@ -108,7 +114,6 @@ export default function App() {
     <DesktopOnlyGate>
       <div className="fixed inset-0 overflow-hidden bg-background">
       <Canvas
-        flat
         shadows={renderScale !== 'low'}
         dpr={[0.7, targetDpr]}
         gl={{ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false }}

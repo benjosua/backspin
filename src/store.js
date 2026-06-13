@@ -69,6 +69,28 @@ const readPlayerName = () => {
   return normalizePlayerName(localStorage.getItem('backspin.playerName')) || 'PLAYER';
 };
 
+const resetPlayState = (state, extra = {}) => ({
+  scoreP: 0,
+  scoreAI: 0,
+  phase: 'serve',
+  winner: null,
+  flashText: '',
+  flashId: 0,
+  resetNonce: state.resetNonce + 1,
+  ...extra,
+});
+
+const resetOnlineState = () => ({
+  networkStatus: 'idle',
+  networkError: '',
+  roomCode: '',
+  onlineSide: null,
+  currentMatchId: '',
+  emotes: { player: null, ai: null },
+  onlineRematchRequested: false,
+  opponentName: 'OPPONENT',
+});
+
 export const useGameStore = create((set, get) => ({
   revealed: DEBUG_MODE,
   started: DEBUG_MODE,
@@ -120,44 +142,18 @@ export const useGameStore = create((set, get) => ({
     set((state) => ({
       started: true,
       mode: 'offline',
-      networkStatus: 'idle',
-      networkError: '',
-      roomCode: '',
-      onlineSide: null,
-      currentMatchId: '',
-      emotes: { player: null, ai: null },
-      onlineRematchRequested: false,
-      opponentName: 'OPPONENT',
-      scoreP: 0,
-      scoreAI: 0,
-      phase: 'serve',
-      winner: null,
-      flashText: '',
-      flashId: 0,
+      ...resetOnlineState(),
+      ...resetPlayState(state),
       menuOpen: false,
-      resetNonce: state.resetNonce + 1,
     })),
 
   backToMenu: () =>
     set((state) => ({
       started: false,
       mode: 'offline',
-      networkStatus: 'idle',
-      networkError: '',
-      roomCode: '',
-      onlineSide: null,
-      currentMatchId: '',
-      emotes: { player: null, ai: null },
-      onlineRematchRequested: false,
-      opponentName: 'OPPONENT',
-      scoreP: 0,
-      scoreAI: 0,
-      phase: 'serve',
-      winner: null,
-      flashText: '',
-      flashId: 0,
+      ...resetOnlineState(),
+      ...resetPlayState(state),
       menuOpen: false,
-      resetNonce: state.resetNonce + 1,
     })),
 
   goHome: () => get().backToMenu(),
@@ -185,28 +181,10 @@ export const useGameStore = create((set, get) => ({
     }),
 
   newGame: () =>
-    set((state) => ({
-      scoreP: 0,
-      scoreAI: 0,
-      phase: 'serve',
-      winner: null,
-      flashText: '',
-      flashId: 0,
-      resetNonce: state.resetNonce + 1,
-    })),
+    set((state) => resetPlayState(state)),
 
   setDifficulty: (difficulty) =>
-    set((state) => ({
-      difficulty,
-      scoreP: 0,
-      scoreAI: 0,
-      phase: 'serve',
-      winner: null,
-      flashText: '',
-      flashId: 0,
-      menuOpen: false,
-      resetNonce: state.resetNonce + 1,
-    })),
+    set((state) => resetPlayState(state, { difficulty, menuOpen: false })),
 
   setPhase: (phase) => set({ phase }),
   setServer: (server) => set({ server }),
@@ -216,19 +194,14 @@ export const useGameStore = create((set, get) => ({
     set((state) => ({
       started: true,
       mode: 'online',
-      opponentName: 'OPPONENT',
-      scoreP: 0,
-      scoreAI: 0,
-      phase: 'serve',
+      ...resetPlayState(state, {
+        emotes: { player: null, ai: null },
+        onlineRematchRequested: false,
+        currentMatchId: '',
+        menuOpen: false,
+      }),
       server: 'player',
-      winner: null,
-      flashText: '',
-      flashId: 0,
-      emotes: { player: null, ai: null },
-      onlineRematchRequested: false,
-      currentMatchId: '',
-      menuOpen: false,
-      resetNonce: state.resetNonce + 1,
+      opponentName: 'OPPONENT',
     })),
 
   setNetworkStatus: (networkStatus, networkError = '') => set({ networkStatus, networkError }),

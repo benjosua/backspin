@@ -4,13 +4,14 @@
 import { RoundedBox, Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CanvasTexture, Color } from 'three';
+import { Color } from 'three';
 import { BOTS, TUNING } from '../constants.js';
 import { getDebugTime } from '../debug-tuning.js';
 import { clampDt, damp } from '../fx-state.js';
 import { initAudio, playCharge } from '../audio.js';
 import { useGameStore } from '../store.js';
 import { MONTSERRAT_FONT_URL } from '../fonts.js';
+import { makeGlowTexture } from '../three-textures.js';
 
 const titleColor = '#fff3e0';
 const ink = '#4b4034';
@@ -48,24 +49,6 @@ function stageIn(stage, delay, outDelay) {
     value *= 1 - t * t * (3 - t * 2);
   }
   return value;
-}
-function makeGlowTexture(rgb, strong = false) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-  const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-  if (strong) {
-    gradient.addColorStop(0, `rgba(${rgb},0.85)`);
-    gradient.addColorStop(0.55, `rgba(${rgb},0.45)`);
-    gradient.addColorStop(1, `rgba(${rgb},0)`);
-  } else {
-    gradient.addColorStop(0, `rgba(${rgb},0.8)`);
-    gradient.addColorStop(0.35, `rgba(${rgb},0.3)`);
-    gradient.addColorStop(1, `rgba(${rgb},0)`);
-  }
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 128, 128);
-  return new CanvasTexture(canvas);
 }
 function GlassCard({ w, h, bgRef, rimRef }) {
   return (

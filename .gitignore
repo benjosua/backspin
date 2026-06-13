@@ -23,3 +23,5 @@ yarn-error.log*
 .devmode.json
 my-server/.colyseus-cloud.json
 my-server/.devmode.json
+core
+core.*
