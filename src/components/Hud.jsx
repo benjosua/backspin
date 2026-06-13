@@ -3,7 +3,8 @@
 import { useProgress } from '@react-three/drei';
 import { useEffect, useRef, useState } from 'react';
 import { BOTS, COLORS, PLAYER_SPEED, TABLE } from '../constants.js';
-import { inputHud } from '../engine.js';
+import { NET } from '../../shared/backspin-core.js';
+import { inputHud } from '../view-state.js';
 import { fetchMyMatches, fetchMyStats, networkGame } from '../network.js';
 import { replayGame } from '../replay.js';
 import { DEBUG_MODE, RENDER_SCALES, useGameStore } from '../store.js';
@@ -125,7 +126,7 @@ export function ChargeDial() {
 }
 
 const emoteLifeMs = 1400;
-const emotePaddleRange = TABLE.halfWidth + 0.5;
+const emotePaddleRange = TABLE.halfWidth + NET.paddleInset;
 
 export function EmoteBubbles() {
   const player = useRef(null);
@@ -907,10 +908,10 @@ export function PointerCursor() {
       ref={ref}
       className="pointer-events-none fixed left-0 top-0 z-[10000] size-0 opacity-0 transition-opacity duration-150"
       aria-hidden
-      style={{ '--cursor-accent-opacity': 0.45 }}
+      style={{ '--cursor-accent-opacity': 0.45, '--cursor-score-red': '#ffffff' }}
     >
-      <span className="absolute left-0 top-0 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/55 bg-background/20 shadow-[0_0_0_1px_rgba(255,255,255,0.42)]" />
-      <span className="absolute left-0 top-0 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary [opacity:var(--cursor-accent-opacity)]" />
+      <span className="absolute left-0 top-0 h-0.5 w-5 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full [background:var(--cursor-score-red)] [opacity:var(--cursor-accent-opacity)]" />
+      <span className="absolute left-0 top-0 h-0.5 w-5 -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded-full [background:var(--cursor-score-red)] [opacity:var(--cursor-accent-opacity)]" />
     </div>
   );
 }

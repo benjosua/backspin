@@ -1,9 +1,9 @@
 import { MathUtils, Vector3 } from 'three';
-import { CAMERA, TABLE } from './constants.js';
-import { arenaFx, clampDt, damp, decayFx, resetFx } from './fx-state.js';
-import { inputHud, resetInputHud } from './engine.js';
+import { CAMERA } from './constants.js';
+import { clampDt, damp, resetFx } from './fx-state.js';
+import { inputHud, resetInputHud } from './view-state.js';
 import { useGameStore } from './store.js';
-import { makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
+import { assignDriverViewState, clearAimAndProjection, updateArenaVisuals, updateBallVisuals, updateReplayPaddles } from './game-driver-view.js';
 
 const replayDevBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
   ? `${window.location.protocol}//${window.location.hostname}:2567`
@@ -118,20 +118,7 @@ export async function fetchShotReplay(matchId, shotId, token) {
 
 class ReplayGame {
   constructor() {
-    this.player = makeRacket('player', 4.8);
-    this.ai = makeRacket('ai', -4.8);
-    this.ball = new Vector3(0, 0.34, 0);
-    this.vel = new Vector3();
-    this.spin = { top: 0, side: 0 };
-    this.shadow = makeShadow();
-    this.marker = makeMarker();
-    this.aim = makeAim();
-    this.brain = { confidence: 0.5 };
-    this.netWobble = 0;
-    this.netRotX = 0;
-    this.ballRotX = 0;
-    this.ballRotY = 0;
-    this.shake = 0;
+    assignDriverViewState(this, 'replay');
     const [x, y, z] = CAMERA.playPosition;
     const [lx, ly, lz] = CAMERA.playTarget;
     this.camX = x; this.camY = y; this.camZ = z;
@@ -287,12 +274,11 @@ class ReplayGame {
     this.vel.set(frame.velocity.x * flip, frame.velocity.y, frame.velocity.z * flip);
     this.spin.top = frame.spin.top;
     this.spin.side = frame.spin.side * flip;
-    updateShadow(this.shadow, this.ball, TABLE);
     inputHud.charge = this.player.tell;
     inputHud.charging = false;
     inputHud.exchange = frame.exchange || 0;
-    resetMarker(this.marker);
-    this.aim.op = 0;
+    updateBallVisuals(this, 0);
+    clearAimAndProjection(this);
 
     const match = this.playerRef?.replay?.match;
     const scoreP = localIsP1 ? frame.score.p1 : frame.score.p2;
@@ -319,22 +305,9 @@ class ReplayGame {
       this.syncReplayTime(reachedEnd);
       if (reachedEnd) useGameStore.getState().setReplayPlaying(false);
     }
-    for (const racket of [this.player, this.ai]) {
-      const sign = racket.who === 'player' ? 1 : -1;
-      racket.y = damp(racket.y, 0.62 + racket.tell * 0.25, 8, dt);
-      racket.z = racket.baseZ;
-      racket.flash = Math.max(0, racket.flash - dt * 4);
-      racket.rotX = (racket.who === 'player' ? -0.22 : 0.22) + racket.tell * sign * 0.18;
-      racket.rotZ = damp(racket.rotZ, clamp(-racket.vx * 0.12, -0.45, 0.45), 10, dt);
-    }
-    this.ballRotX -= (2 + this.spin.top * 16) * dt;
-    this.ballRotY += this.spin.side * 14 * dt;
-    arenaFx.heat = damp(arenaFx.heat, clamp(0.12 + (inputHud.exchange || 0) * 0.05, 0, 0.8), 2, dt);
-    arenaFx.serveCharge = 0;
-    arenaFx.exchangeN = inputHud.exchange || 0;
-    decayFx(dt);
-    this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
-    this.netRotX = Math.sin(time * 26) * this.netWobble * 0.1;
+    updateReplayPaddles(this, dt);
+    updateBallVisuals(this, dt);
+    updateArenaVisuals(this, store.phase, inputHud.exchange || 0, 0, dt, time, { replay: true });
     const cosPitch = Math.cos(this.cameraPitch);
     const targetX = this.cameraTarget.x + Math.sin(this.cameraYaw) * cosPitch * this.cameraDistance;
     const targetY = this.cameraTarget.y + Math.sin(this.cameraPitch) * this.cameraDistance;

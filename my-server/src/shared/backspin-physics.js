@@ -1,107 +1,16 @@
-import { TABLE, PHYSICS, CONTACT, maxReachableContactX } from './backspin-core.js';
-
-export const GRAVITY_BASE = 30;
-export const TOPSPIN_GRAVITY = 11;
+import { TABLE, PHYSICS, CONTACT, sampleBallPlan, createGame, clamp, sideDir } from './game-core.js';
+export const GRAVITY_BASE = PHYSICS.gravity;
+export const TOPSPIN_GRAVITY = PHYSICS.topspinGravity;
 export const BALL_STEP = 1 / 120;
-
-export function stepBall(ball, velocity, spin, dt) {
-  velocity.x += spin.side * PHYSICS.magnus * dt;
-  velocity.y -= (GRAVITY_BASE + spin.top * TOPSPIN_GRAVITY) * dt;
-  ball.x += velocity.x * dt;
-  ball.y += velocity.y * dt;
-  ball.z += velocity.z * dt;
-  return { ball, velocity, spin };
-}
-
-export function stepBallState(state, dt) {
-  state.ballVx += state.spinSide * PHYSICS.magnus * dt;
-  state.ballVy -= (GRAVITY_BASE + state.spinTop * TOPSPIN_GRAVITY) * dt;
-  state.ballX += state.ballVx * dt;
-  state.ballY += state.ballVy * dt;
-  state.ballZ += state.ballVz * dt;
-  return state;
-}
-
-export function applyBounce(ball, velocity, spin) {
-  ball.y = TABLE.ballRadius;
-  velocity.y = Math.abs(velocity.y) * TABLE.bounceRestitution * (1 - Math.max(spin.top, 0) * 0.18);
-  const zSign = Math.sign(velocity.z) || 1;
-  velocity.z += zSign * spin.top * PHYSICS.speedScale;
-  velocity.x += spin.side * PHYSICS.curveScale;
-  spin.top *= 0.55;
-  spin.side *= 0.55;
-  return { side: ball.z > 0 ? 'p1' : 'p2', ball, velocity, spin };
-}
-
-export function applyStateBounce(state) {
-  state.ballY = TABLE.ballRadius;
-  state.ballVy = Math.abs(state.ballVy) * TABLE.bounceRestitution * (1 - Math.max(state.spinTop, 0) * 0.18);
-  const zSign = Math.sign(state.ballVz) || 1;
-  state.ballVz += zSign * state.spinTop * PHYSICS.speedScale;
-  state.ballVx += state.spinSide * PHYSICS.curveScale;
-  state.spinTop *= 0.55;
-  state.spinSide *= 0.55;
-  return { side: state.ballZ > 0 ? 'p1' : 'p2', state };
-}
-
-export function isOnTable(ball) {
-  return Math.abs(ball.x) <= TABLE.halfWidth && Math.abs(ball.z) <= TABLE.halfLength;
-}
-
-export function isStateBallOnTable(state) {
-  return Math.abs(state.ballX) <= TABLE.halfWidth && Math.abs(state.ballZ) <= TABLE.halfLength;
-}
-
-export function detectNet(prevZ, prevY, ball, radiusFactor = 0.4) {
-  if (Math.sign(prevZ) === Math.sign(ball.z)) return null;
-  const t = (0 - prevZ) / (ball.z - prevZ || 0.000001);
-  const y = prevY + (ball.y - prevY) * t;
-  return y - TABLE.ballRadius * radiusFactor <= TABLE.netHeight ? { t, y } : null;
-}
-
-export function detectStateNet(prevZ, prevY, state, radiusFactor = 0.4) {
-  if (Math.sign(prevZ) === Math.sign(state.ballZ)) return null;
-  const t = (0 - prevZ) / (state.ballZ - prevZ || 0.000001);
-  const y = prevY + (state.ballY - prevY) * t;
-  return y - TABLE.ballRadius * radiusFactor <= TABLE.netHeight ? { t, y } : null;
-}
-
-export function detectRacketContact({ side, prev, ball, velocity, racketX, reach = CONTACT.reachX, maxY = CONTACT.maxY, minY = CONTACT.minY, racketZ = CONTACT.racketZ }) {
-  const z = side === 'player' || side === 'p1' ? racketZ : -racketZ;
-  if (!(side === 'player' || side === 'p1' ? velocity.z > 0 : velocity.z < 0)) return null;
-  if ((prev.z - z) * (ball.z - z) > 0) return null;
-  const t = (z - prev.z) / (ball.z - prev.z || 0.000001);
-  const x = prev.x + (ball.x - prev.x) * t;
-  const y = prev.y + (ball.y - prev.y) * t;
-  if (Math.abs(x - racketX) > reach || y < minY || y > maxY) return null;
-  return { x, y, z, t };
-}
-
-export function detectStateRacketContact({ side, prevX, prevY, prevZ, state, racketX, reach = CONTACT.reachX }) {
-  const racketZ = side === 'p1' ? CONTACT.racketZ : -CONTACT.racketZ;
-  if (!(side === 'p1' ? state.ballVz > 0 : state.ballVz < 0)) return null;
-  if ((prevZ - racketZ) * (state.ballZ - racketZ) > 0) return null;
-  const t = (racketZ - prevZ) / (state.ballZ - prevZ || 0.000001);
-  const x = prevX + (state.ballX - prevX) * t;
-  const y = prevY + (state.ballY - prevY) * t;
-  if (Math.abs(x - racketX) > reach || y < CONTACT.minY || y > CONTACT.maxY) return null;
-  return { x, y, z: racketZ, t };
-}
-
-export function predictBall(ball, velocity, spin, seconds, maxLead = 0.125) {
-  let remaining = Math.max(0, Math.min(seconds, maxLead));
-  while (remaining > 0) {
-    const dt = Math.min(BALL_STEP, remaining);
-    const prevY = ball.y;
-    stepBall(ball, velocity, spin, dt);
-    remaining -= dt;
-    if (velocity.y < 0 && prevY > TABLE.ballRadius && ball.y <= TABLE.ballRadius && isOnTable(ball)) {
-      applyBounce(ball, velocity, spin);
-    }
-  }
-  return { ball, velocity, spin };
-}
-
-export function receiverReachableX() {
-  return maxReachableContactX();
-}
+export function stepBall(ball, velocity, spin, dt) { velocity.x += spin.side * PHYSICS.magnus * dt; velocity.y -= (PHYSICS.gravity + spin.top * PHYSICS.topspinGravity) * dt; ball.x += velocity.x * dt; ball.y += velocity.y * dt; ball.z += velocity.z * dt; return { ball, velocity, spin }; }
+export function stepBallState(state, dt) { state.ballVx += state.spinSide * PHYSICS.magnus * dt; state.ballVy -= (PHYSICS.gravity + state.spinTop * PHYSICS.topspinGravity) * dt; state.ballX += state.ballVx * dt; state.ballY += state.ballVy * dt; state.ballZ += state.ballVz * dt; return state; }
+export function applyBounce(ball, velocity, spin) { ball.y = TABLE.ballRadius; velocity.y = Math.abs(velocity.y) * TABLE.bounceRestitution * (1 - Math.max(spin.top, 0) * 0.18); velocity.z += (Math.sign(velocity.z) || 1) * spin.top * PHYSICS.speedScale; velocity.x += spin.side * PHYSICS.curveScale; spin.top *= 0.55; spin.side *= 0.55; return { side: ball.z > 0 ? 'p1' : 'p2', ball, velocity, spin }; }
+export function applyStateBounce(state) { const out = applyBounce({ x: state.ballX, y: state.ballY, z: state.ballZ }, { x: state.ballVx, y: state.ballVy, z: state.ballVz }, { top: state.spinTop, side: state.spinSide }); state.ballY = out.ball.y; state.ballVx = out.velocity.x; state.ballVy = out.velocity.y; state.ballVz = out.velocity.z; state.spinTop = out.spin.top; state.spinSide = out.spin.side; return { side: out.side, state }; }
+export const isOnTable = (ball) => Math.abs(ball.x) <= TABLE.halfWidth && Math.abs(ball.z) <= TABLE.halfLength;
+export const isStateBallOnTable = (state) => Math.abs(state.ballX) <= TABLE.halfWidth && Math.abs(state.ballZ) <= TABLE.halfLength;
+export function detectNet(prevZ, prevY, ball, radiusFactor = 0.4) { if (Math.sign(prevZ) === Math.sign(ball.z)) return null; const t = (0 - prevZ) / (ball.z - prevZ || 0.000001); const y = prevY + (ball.y - prevY) * t; return y - TABLE.ballRadius * radiusFactor <= TABLE.netHeight ? { t, y } : null; }
+export function detectStateNet(prevZ, prevY, state, radiusFactor = 0.4) { return detectNet(prevZ, prevY, { x: state.ballX, y: state.ballY, z: state.ballZ }, radiusFactor); }
+export function detectRacketContact({ side, prev, ball, velocity, racketX, reach = CONTACT.reachX, maxY = CONTACT.maxY, minY = CONTACT.minY, racketZ = CONTACT.racketZ }) { const z = side === 'p1' || side === 'player' ? racketZ : -racketZ; if (!(side === 'p1' || side === 'player' ? velocity.z > 0 : velocity.z < 0)) return null; if ((prev.z - z) * (ball.z - z) > 0) return null; const t = (z - prev.z) / (ball.z - prev.z || 0.000001); const x = prev.x + (ball.x - prev.x) * t; const y = prev.y + (ball.y - prev.y) * t; return Math.abs(x - racketX) <= reach && y >= minY && y <= maxY ? { x, y, z, t } : null; }
+export function detectStateRacketContact(args) { return detectRacketContact({ side: args.side, prev: { x: args.prevX, y: args.prevY, z: args.prevZ }, ball: { x: args.state.ballX, y: args.state.ballY, z: args.state.ballZ }, velocity: { x: args.state.ballVx, y: args.state.ballVy, z: args.state.ballVz }, racketX: args.racketX, reach: args.reach }); }
+export function predictBall(ball, velocity, spin, seconds, maxLead = 0.125) { const state = createGame(); state.ballPlan = { startMs: 0, start: { ...ball }, velocity: { ...velocity }, spin: { ...spin }, segments: [] }; const s = sampleBallPlan(state.ballPlan, Math.min(seconds, maxLead) * 1000); Object.assign(ball, { x: s.x, y: s.y, z: s.z }); Object.assign(velocity, { x: s.vx, y: s.vy, z: s.vz }); return { ball, velocity, spin }; }
+export const receiverReachableX = () => TABLE.halfWidth + NET.paddleInset + CONTACT.reachX;

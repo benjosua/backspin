@@ -79,10 +79,10 @@ export function Lights() {
         color={TUNING.lighting.keyColor}
         castShadow
         shadow-mapSize={[shadowSize, shadowSize]}
-        shadow-camera-left={-5}
-        shadow-camera-right={5}
-        shadow-camera-top={6}
-        shadow-camera-bottom={-6}
+        shadow-camera-left={-7}
+        shadow-camera-right={7}
+        shadow-camera-top={8}
+        shadow-camera-bottom={-8}
         shadow-camera-near={2}
         shadow-camera-far={16}
         shadow-bias={-0.0002}

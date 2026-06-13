@@ -19,7 +19,8 @@ import { COLORS, CPU_PADDLE, PHYSICS, PLAYER_PADDLE, TABLE, TUNING } from '../co
 import { perfSettings } from '../performance.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { getDebugTime } from '../debug-tuning.js';
-import { game, inputHud } from '../engine.js';
+import { game } from '../engine.js';
+import { inputHud } from '../view-state.js';
 import { POINT_RESET_DELAY_SECONDS } from '../../shared/backspin-core.js';
 import { replayGame } from '../replay.js';
 import { gameDrivers, getActiveGameDriver } from '../game-drivers.js';
@@ -865,7 +866,7 @@ export function Actors() {
         </sprite>
         <mesh ref={marker} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
           <ringGeometry args={[0.34, 0.42, 40]} />
-          <meshBasicMaterial color={COLORS.player} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
+          <meshBasicMaterial color="#4de6ff" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} />
         </mesh>
         <mesh ref={markerKick} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.034, 0]}>
           <ringGeometry args={[0.16, 0.22, 28]} />

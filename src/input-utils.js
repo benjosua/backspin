@@ -1,3 +1,5 @@
+import { aimDepthToTargetZ, aimXToTargetX, targetXToAimX, targetZToAimDepth } from '../shared/backspin-core.js';
+
 const clampUnit = (value) => Math.max(-1, Math.min(1, value));
 
 const browserNeedsPointerScale = (() => {
@@ -38,11 +40,15 @@ export function applyPointerVelocity(target, event, x, y) {
   target.ndcY = y;
 }
 
-export function updateAimFromCamera(target, camera, tableHalfWidth) {
+export function updateAimFromCamera(target, camera) {
   if (!camera) return;
   target.ndc.set(target.ndcX, target.ndcY);
   target.ray.setFromCamera(target.ndc, camera);
-  if (target.ray.ray.intersectPlane(target.plane, target.hit)) {
-    target.aimX = clampUnit(target.hit.x / (tableHalfWidth + 0.5));
-  }
+  if (!target.ray.ray.intersectPlane(target.aimPlane || target.plane, target.hit)) return;
+  target.aimX = targetXToAimX(target.hit.x);
+  target.aimDepth = targetZToAimDepth('p1', target.hit.z);
+}
+
+export function aimTargetFromInput(aimX, aimDepth) {
+  return { x: aimXToTargetX(aimX), z: aimDepthToTargetZ('p1', aimDepth) };
 }

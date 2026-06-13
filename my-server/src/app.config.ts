@@ -4,7 +4,7 @@ import {
     monitor,
     playground,
 } from "colyseus";
-import { auth } from "@colyseus/auth";
+import { auth, JWT } from "@colyseus/auth";
 import express from "express";
 import path from "node:path";
 
@@ -18,6 +18,19 @@ import { rankedStore } from "./ranked/store.js";
 import { matchStore, type MatchSummary } from "./matches/store.js";
 
 configureAuth();
+
+async function ignoreInvalidRegisterUpgradeToken(req: any, _res: any, next: any) {
+    if (req.method !== "POST" || req.path !== "/register") return next();
+    const header = String(req.headers?.authorization || "");
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!token) return next();
+    try {
+        await JWT.verify(token);
+    } catch {
+        delete req.headers.authorization;
+    }
+    next();
+}
 
 async function optionalAuthUser(req: any) {
     const header = String(req.headers?.authorization || "");
@@ -62,7 +75,7 @@ const server = defineServer({
      */
     express: (app) => {
         app.use(express.json());
-        app.use(auth.prefix, auth.routes());
+        app.use(auth.prefix, ignoreInvalidRegisterUpgradeToken, auth.routes());
 
         app.get("/api/me/rank", auth.middleware(), async (req: any, res: any) => {
             try {

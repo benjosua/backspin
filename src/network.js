@@ -1,19 +1,29 @@
 import { Client } from '@colyseus/sdk';
 import { MathUtils, Plane, Raycaster, Vector2, Vector3 } from 'three';
-import { CAMERA, COLORS, PHYSICS, TABLE } from './constants.js';
-import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js';
-import { inputHud, resetInputHud } from './engine.js';
+import { COLORS, TABLE } from './constants.js';
+import { clampDt, damp, decayFx, resetFx } from './fx-state.js';
+import { inputHud, resetInputHud, setInputCallout, decayInputCallout, syncCursorScreen as syncInputCursorScreen } from './view-state.js';
 import { useGameStore } from './store.js';
-import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
-import { NET, POINT_RESET_DELAY_SECONDS, getEmote, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
+import { initAudio } from './audio.js';
+import { NET, POINT_RESET_DELAY_SECONDS, getEmote, stepPaddleX } from '../shared/backspin-core.js';
 import { predictBall as predictSharedBall } from '../shared/backspin-physics.js';
-import { applyMarkerPrediction, makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
 import { applyPointerVelocity, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
+import {
+  applyGameplayFx,
+  assignDriverViewState,
+  serveBallForRacket,
+  syncGameplayAimAndHud,
+  updateArenaVisuals,
+  updateBallVisuals,
+  updateGameplayCamera,
+  updateGameplayPaddles,
+  updateProjectionVisual,
+} from './game-driver-view.js';
+import { PlayableDriver } from './playable-driver.js';
 
 const clamp = MathUtils.clamp;
 const SERVER_BALL_LEAD_MIN = 0.018;
 const SERVER_BALL_LEAD_MAX = 0.075;
-const PADDLE_Y = 0.62;
 const devBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
   ? `${window.location.protocol}//${window.location.hostname}:2567`
   : '';
@@ -61,6 +71,13 @@ async function refreshLeaderboard() {
   return leaderboard;
 }
 
+async function clearStaleAuthToken() {
+  if (!client.auth.token) return;
+  await client.auth.signOut();
+  useGameStore.getState().setAuth(null, null);
+  useGameStore.getState().setRankedProfile(null);
+}
+
 export async function fetchMyMatches(limit = 20, offset = 0) {
   return apiFetch(`/api/me/matches?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`);
 }
@@ -82,6 +99,12 @@ async function syncAccountName(name) {
 }
 
 client.auth.onChange(({ user, token }) => {
+  if (!user && token === undefined && client.auth.token) {
+    clearStaleAuthToken().catch(() => {
+      client.auth.token = null;
+      useGameStore.getState().setAuth(null, null);
+    });
+  }
   useGameStore.getState().setAuth(user || null, token || null);
   if (user) refreshRankedProfile().catch(() => useGameStore.getState().setRankedProfile(null));
   else useGameStore.getState().setRankedProfile(null);
@@ -89,14 +112,14 @@ client.auth.onChange(({ user, token }) => {
 });
 
 
-class NetworkGame {
+class NetworkGame extends PlayableDriver {
   constructor() {
+    super();
     this.room = null;
     this.queueRoom = null;
     this.side = null;
     this.remoteState = null;
-    this.ball = new Vector3(0, 0.34, 0);
-    this.vel = new Vector3();
+    this.ball.set(0, 0.34, 0);
     this.targetBall = new Vector3(0, 0.34, 0);
     this.targetVel = new Vector3();
     this.targetPlayerX = 0;
@@ -108,49 +131,10 @@ class NetworkGame {
     this.snapNext = true;
     this.lastPointSeq = 0;
     this.pointVisualT = 0;
-    this.spin = { top: 0, side: 0 };
-    this.player = makeRacket('player', 4.8);
-    this.ai = makeRacket('ai', -4.8);
-    this.brain = { confidence: 0.5 };
-    this.ballRotX = 0;
-    this.ballRotY = 0;
-    this.shadow = makeShadow();
-    this.marker = makeMarker();
-    this.aim = makeAim();
-    this.netWobble = 0;
-    this.netRotX = 0;
-    this.shake = 0;
-    this.overT = 0;
-    this.volley = 0;
-    this.ndcX = 0;
-    this.ndcY = 0;
-    this.lastT = 0;
-    this.lastNdcX = 0;
-    this.lastNdcY = 0;
-    this.pvx = 0;
-    this.pvy = 0;
-    this.kTop = 0;
-    this.charging = false;
-    this.charge = 0;
-    this.inputX = 0;
-    this.aimX = 0;
-    this.aimDepth = 0.5;
-    this.usingKeys = false;
-    this.keys = { l: false, r: false };
-    this.pointerLocked = false;
     this.lastSend = 0;
     this.lastPing = 0;
     this.rttMs = 66;
     this.leaving = false;
-    this.ray = new Raycaster();
-    this.plane = new Plane(new Vector3(0, 1, 0), -0.62);
-    this.ndc = new Vector2();
-    this.hit = new Vector3();
-    const [x, y, z] = CAMERA.desktopPosition;
-    const [lx, ly, lz] = CAMERA.desktopTarget;
-    this.camX = x; this.camY = y; this.camZ = z;
-    this.camLX = lx; this.camLY = ly; this.camLZ = lz;
-    this.camFov = 44;
   }
 
   isConnected() { return !!this.room; }
@@ -174,12 +158,14 @@ class NetworkGame {
   }
 
   async signIn(email, password) {
+    await clearStaleAuthToken();
     const result = await client.auth.signInWithEmailAndPassword(email, password);
     await Promise.all([refreshRankedProfile(), refreshLeaderboard()]);
     return result;
   }
 
   async register(email, password) {
+    await clearStaleAuthToken();
     const result = await client.auth.registerWithEmailAndPassword(email, password, { name: playerName() });
     await Promise.all([refreshRankedProfile(), refreshLeaderboard()]);
     return result;
@@ -255,10 +241,17 @@ class NetworkGame {
       this.sendProfile();
     });
     room.onMessage('fx', (message) => {
-      if (message.type === 'bounce') playBounce();
-      if (message.type === 'hit') playHit(message.smash ? 1 : 0.4, this.remoteState?.exchange || 0);
-      if (message.type === 'point') playMenu(message.winner === this.side);
-      if (message.type === 'net') playNet();
+      const flip = this.side === 'p2' ? -1 : 1;
+      if (message.type === 'bounce') {
+        applyGameplayFx(this, { ...message, x: (message.x || 0) * flip, z: (message.z || 0) * flip }, { pointLabel: '' });
+      }
+      if (message.type === 'hit') {
+        applyGameplayFx(this, message, { exchange: this.remoteState?.exchange || 0, sideColor: (side) => side === this.side ? COLORS.player : COLORS.ai, pointLabel: '' });
+      }
+      if (message.type === 'point') {
+        applyGameplayFx(this, message, { winnerIsLocal: (side) => side === this.side, pointLabel: '' });
+      }
+      if (message.type === 'net') applyGameplayFx(this, message, { pointLabel: '' });
     });
     room.onMessage('emote', (message) => {
       const emoji = getEmote(message?.emoteId) || message?.emoji;
@@ -300,6 +293,7 @@ class NetworkGame {
     this.room.send('rematch');
     return true;
   }
+
 
   async disconnect(goHome = true) {
     if (this.queueRoom) {
@@ -390,32 +384,17 @@ class NetworkGame {
 
   newMatch() {}
 
-  setPointerLocked(locked) { this.pointerLocked = locked; if (locked) this.syncCursorScreen(); }
-  syncCursorScreen() {
-    inputHud.cursorX = (this.ndcX + 1) * 0.5 * window.innerWidth;
-    inputHud.cursorY = (1 - this.ndcY) * 0.5 * window.innerHeight;
+  onChargeStart() {
+    this.room?.send('charge', { charging: true });
   }
-  onPointerMove(event) {
-    const { x, y } = pointerEventToNdc(event, this.ndcX, this.ndcY, this.pointerLocked);
-    applyPointerVelocity(this, event, x, y);
-    this.syncCursorScreen();
-  }
-  onPointerDown(event) {
-    if (event.pointerType !== 'mouse' || event.button === 0) {
-      initAudio();
-      this.onPointerMove(event);
-      this.charging = true;
-      this.room?.send('charge', { charging: true });
-    }
-  }
-  onPointerUp(event) {
-    if (event?.pointerType === 'mouse' && event.button !== 0) return;
-    this.charging = false;
+
+  onChargeEnd() {
     this.room?.send('charge', { charging: false });
     const state = useGameStore.getState();
     if (state.phase === 'serve' && state.server === 'player') this.room?.send('serve');
   }
-  onKeyDown(event) {
+
+  handleEmoteKey(event) {
     const emoteId = emoteKeyId(event.code);
     if (emoteId) {
       const state = useGameStore.getState();
@@ -423,38 +402,25 @@ class NetworkGame {
         this.sendEmote(emoteId);
         event.preventDefault();
       }
-      return;
+      return true;
     }
-    if (event.code === 'ArrowLeft' || event.code === 'KeyA') { this.keys.l = true; this.usingKeys = true; }
-    if (event.code === 'ArrowRight' || event.code === 'KeyD') { this.keys.r = true; this.usingKeys = true; }
-    if (event.code === 'ArrowUp' || event.code === 'KeyW') this.kTop = 0.85;
-    if (event.code === 'ArrowDown' || event.code === 'KeyS') this.kTop = -0.7;
-    if (event.code === 'Space' || event.code === 'Enter') { initAudio(); this.charging = true; this.room?.send('charge', { charging: true }); event.preventDefault(); }
+    return false;
   }
-  onKeyUp(event) {
-    if (event.code === 'ArrowLeft' || event.code === 'KeyA') this.keys.l = false;
-    if (event.code === 'ArrowRight' || event.code === 'KeyD') this.keys.r = false;
-    if (event.code === 'Space' || event.code === 'Enter') this.onPointerUp();
-  }
-
+  
   predictBall(ball, vel, seconds) {
     predictSharedBall(ball, vel, { top: this.spin.top, side: this.spin.side }, seconds, SERVER_BALL_LEAD_MAX + 0.05);
   }
 
   update(dt, time, camera, effects) {
+    this.fx = effects;
     dt = clampDt(dt);
     const store = useGameStore.getState();
     if (!store.started || store.mode !== 'online') return;
     if (store.menuOpen && store.phase !== 'over') {
       decayFx(dt); inputHud.charging = false; return;
     }
-    updateAimFromCamera(this, camera, TABLE.halfWidth);
-    const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
-    if (dir) this.inputX = clamp(this.inputX + dir * 19 * store.playerSpeed * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
-    this.aimDepth = clamp((this.ndcY + 1) * 0.5, 0, 1);
-    this.pvx = damp(this.pvx, 0, 9, dt);
-    this.pvy = damp(this.pvy, 0, 9, dt);
-    this.kTop = damp(this.kTop, 0, 6, dt);
+    decayInputCallout(dt);
+    this.updateInputState(dt, store.playerSpeed, camera);
     const now = performance.now();
     if (this.room && now - this.lastSend >= NET.inputSendMs) {
       this.lastSend = now;
@@ -491,7 +457,8 @@ class NetworkGame {
     if (store.phase === 'point') this.pointVisualT = Math.max(0, this.pointVisualT - dt);
     if (store.phase === 'serve') {
       const racket = store.server === 'player' ? this.player : this.ai;
-      this.renderTargetBall.set(racket.x, PADDLE_Y + 0.34, racket.baseZ + (racket.who === 'player' ? -0.45 : 0.45));
+      const serveBall = serveBallForRacket(racket);
+      this.renderTargetBall.set(serveBall.x, serveBall.y, serveBall.z);
       this.predictedVel.set(0, 0, 0);
     } else if (store.phase === 'exchange' || store.phase === 'point') {
       const sincePatch = Math.max(0, (performance.now() - this.lastPatchAt) / 1000);
@@ -503,57 +470,13 @@ class NetworkGame {
     this.vel.lerp(this.predictedVel, 1 - Math.exp(-48 * dt));
 
     const canInfluence = store.phase === 'exchange' || (store.phase === 'serve' && store.server === 'player');
-    inputHud.charge = canInfluence ? this.charge : 0;
-    inputHud.charging = canInfluence && this.charging;
-    inputHud.aimX = this.aimX;
-    inputHud.aimDepth = this.aimDepth;
-    inputHud.aimLabel = `${this.aimX < -0.25 ? 'LEFT' : this.aimX > 0.25 ? 'RIGHT' : 'CENTER'} · ${this.aimDepth < 0.35 ? 'SHORT' : this.aimDepth > 0.7 ? 'DEEP' : 'MID'}`;
-    inputHud.spinX = clamp(this.pvx * 0.12, -1, 1);
-    inputHud.spinY = clamp((this.pvy + this.kTop) * 0.12, -1, 1);
-    inputHud.spinMag = Math.min(1, Math.hypot(inputHud.spinX, inputHud.spinY));
+    syncGameplayAimAndHud(this, { charge: this.charge, charging: this.charging, exchange: this.remoteState?.exchange || 0, canInfluence });
 
-    for (const racket of [this.player, this.ai]) {
-      const sign = racket.who === 'player' ? 1 : -1;
-      racket.y = 0.62;
-      racket.z = racket.baseZ;
-      racket.flash = Math.max(0, racket.flash - dt * 4);
-      racket.rotX = (racket.who === 'player' ? -0.22 : 0.22) + racket.swing * sign * 0.3;
-      racket.rotZ = damp(racket.rotZ, clamp(-racket.vx * 0.045, -0.45, 0.45), 10, dt);
-    }
-    this.ballRotX -= (2 + this.spin.top * 16) * dt;
-    this.ballRotY += this.spin.side * 14 * dt;
-    updateShadow(this.shadow, this.ball, TABLE);
-    const aiming = canInfluence;
-    this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
-    this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
-    this.aim.op = aiming ? clamp(0.12 + this.charge * 0.6, 0, 0.78) : 0;
-    this.aim.spinX = inputHud.spinX;
-    this.aim.spinY = inputHud.spinY;
-    this.aim.power = this.charge;
-    resetMarker(this.marker);
-    const incoming = store.phase === 'exchange' && this.ball.z < PHYSICS.gravity && this.vel.z > 0;
-    if (incoming && this.ball.y > TABLE.ballRadius) {
-      const prediction = predictBounceKick(this.ball, this.vel, this.spin);
-      applyMarkerPrediction(this.marker, prediction, TABLE, time);
-    }
-    this.netWobble = Math.max(0, this.netWobble - dt * 2.2);
-    this.netRotX = Math.sin(time * 26) * this.netWobble * 0.1;
-    arenaFx.heat = damp(arenaFx.heat, store.phase === 'exchange' ? clamp(0.16 + (this.remoteState?.exchange || 0) * 0.07, 0, 1) : 0, 2, dt);
-    arenaFx.serveCharge = this.charge;
-    arenaFx.exchangeN = this.remoteState?.exchange || 0;
-    decayFx(dt);
-    if (store.phase === 'over') raiseFx('score', 0.2);
-
-    const heat = arenaFx.heat;
-    const bob = Math.sin(time * (1 + heat)) * (0.03 + heat * 0.07);
-    this.shake = Math.max(0, this.shake - dt * 1.8);
-    this.camX = damp(this.camX, CAMERA.introPosition[0] + this.ndcX * 0.7, 2.5, dt);
-    this.camY = damp(this.camY, CAMERA.introPosition[1] + this.ndcY * 0.35 + bob, 2.5, dt);
-    this.camZ = damp(this.camZ, CAMERA.introPosition[2] - heat * 1.4, 2.8, dt);
-    this.camLX = damp(this.camLX, CAMERA.introTarget[0], 2.4, dt);
-    this.camLY = damp(this.camLY, CAMERA.introTarget[1], 2.4, dt);
-    this.camLZ = damp(this.camLZ, CAMERA.introTarget[2], 2.4, dt);
-    this.camFov = damp(this.camFov, 38, 2.6, dt);
+    updateGameplayPaddles(this, dt, { playerIncoming: store.phase === 'exchange' && this.vel.z > 0, aiIncoming: store.phase === 'exchange' && this.vel.z < 0 });
+    updateBallVisuals(this, dt);
+    updateProjectionVisual(this, { phase: store.phase });
+    updateArenaVisuals(this, store.phase, this.remoteState?.exchange || 0, this.charge, dt, time, { raiseOverScore: true });
+    updateGameplayCamera(this, dt, time);
   }
 }
 

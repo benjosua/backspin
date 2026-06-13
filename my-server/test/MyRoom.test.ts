@@ -9,6 +9,7 @@ import { MatchReplayRecorder } from "../src/matches/MatchReplayRecorder.js";
 import {
   CONTACT,
   NET,
+  TABLE,
   maxReachableContactX,
   resolvePlayerShot,
   simulateLegalServe,
@@ -274,7 +275,7 @@ describe("backspin room", () => {
     assert.strictEqual(step.vx, NET.paddleSpeed);
   });
 
-  it("adjusts a legal side-spun shot that would curve beyond max racket reach", () => {
+  it("keeps legal side-spun corner targets reachable without pulling them inward", () => {
     const ball = { x: -3.35, y: 0.45, z: CONTACT.racketZ };
     const targetX = 2.5;
     const targetZ = -2.1;
@@ -286,13 +287,15 @@ describe("backspin room", () => {
     const rawContact = simulateReceiverContact(ball, rawVelocity, topSpin, sideSpin, "p1");
     assert.ok(rawContact.contact, "raw shot should cross receiver racket plane");
     assert.ok(rawContact.catchableHeight, "raw shot should be at catchable height");
-    assert.ok(Math.abs(rawContact.contact.x) > maxReachableContactX(), `expected raw contact outside reach, got ${rawContact.contact.x}`);
+    assert.ok(Math.abs(rawContact.contact.x) <= maxReachableContactX(), `expected widened movement reach to cover raw contact ${rawContact.contact.x}`);
 
-    const fixed = solveReachableShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin, "p1");
-    const fixedContact = simulateReceiverContact(ball, fixed.velocity, fixed.topSpin, fixed.sideSpin, "p1");
-    assert.strictEqual(fixedContact.ok, true);
-    assert.ok(Math.abs(fixedContact.contact.x) <= maxReachableContactX(), `expected fixed contact within reach, got ${fixedContact.contact.x}`);
-    assert.strictEqual(fixed.reachAdjusted, true);
+    const solved = solveReachableShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin, "p1");
+    const solvedContact = simulateReceiverContact(ball, solved.velocity, solved.topSpin, solved.sideSpin, "p1");
+    assert.ok(solvedContact.bounce, "solved shot should still bounce");
+    assert.ok(Math.abs(solvedContact.bounce.x) <= TABLE.halfWidth * 0.98, `expected bounce on table, got ${solvedContact.bounce.x}`);
+    assert.ok(solvedContact.ok, `expected solved shot reachable, got ${solvedContact.reason}`);
+    assert.strictEqual(solved.targetX, targetX);
+    assert.strictEqual(solved.reachAdjusted, false);
   });
 
   it("keeps already reachable player shots unchanged", () => {
@@ -333,7 +336,7 @@ describe("backspin room", () => {
     assert.ok(Math.abs(racket.x) <= BOT_MAX_OFF_TABLE_X, `bot paddle too wide: ${racket.x}`);
   });
 
-  it("keeps representative player shots within receiver max reach when catchable", () => {
+  it("keeps representative player shots landing on the requested table side", () => {
     const sides = ["p1", "p2"] as const;
     const xs = [-3.35, 0, 3.35];
     const ys = [0.45, 0.9, 1.6];
@@ -360,9 +363,9 @@ describe("backspin room", () => {
             { random: () => 0.5, swipeSideScale: 0.34 },
           );
           const contact = simulateReceiverContact({ x, y, z }, shot.velocity, shot.spin.top, shot.spin.side, side);
-          if (contact.catchableHeight) {
-            assert.ok(contact.reachableX, `unreachable ${side} shot contact=${contact.contact?.x} aim=${aimX} depth=${aimDepth} charge=${charge} swipe=(${swipeX},${swipeY})`);
-          }
+          assert.ok(contact.bounce, `missing bounce ${side} aim=${aimX} depth=${aimDepth} charge=${charge} swipe=(${swipeX},${swipeY})`);
+          assert.ok(Math.abs(contact.bounce.x) <= TABLE.halfWidth * 0.98, `off-table bounce ${side} x=${contact.bounce.x} aim=${aimX} depth=${aimDepth} charge=${charge} swipe=(${swipeX},${swipeY})`);
+          assert.ok(Math.sign(contact.bounce.z) === (side === "p1" ? -1 : 1), `wrong-side bounce ${side} z=${contact.bounce.z} aim=${aimX} depth=${aimDepth}`);
         }
       }
     }
@@ -582,6 +585,19 @@ describe("backspin room", () => {
     assert.strictEqual(room.state.pointReason, "FAULT");
     await p1.leave();
     await p2.leave();
+  });
+
+  it("ignores stale optional auth token when registering", async () => {
+    const response = await fetch(`${serverHttp(colyseus)}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer stale.invalid.token" },
+      body: JSON.stringify({ email: "stale-token@example.com", password: "secret1", options: { name: "STALE" } }),
+    });
+    const data = await response.json();
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(data.user.name, "STALE");
+    assert.ok(data.token);
   });
 
   it("registers account users and exposes initial rank", async () => {
