@@ -9,6 +9,7 @@ export const QUALITY_LEVELS = {
     ringCount: 4,
     shockCount: 3,
     impactCount: 4,
+    shadowMapSize: 512,
   },
   medium: {
     name: 'medium',
@@ -20,6 +21,7 @@ export const QUALITY_LEVELS = {
     ringCount: 6,
     shockCount: 4,
     impactCount: 5,
+    shadowMapSize: 1024,
   },
   high: {
     name: 'high',
@@ -31,6 +33,7 @@ export const QUALITY_LEVELS = {
     ringCount: 8,
     shockCount: 5,
     impactCount: 6,
+    shadowMapSize: 2048,
   },
 };
 

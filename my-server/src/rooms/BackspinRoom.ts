@@ -1,7 +1,7 @@
 import { Room, Client, ServerError, ErrorCode } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
 import { NET, POINT_RESET_DELAY_SECONDS, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, getEmote, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
-import { getBot, makeBrain, resetBrain, updateBrain, resolveBotServe, resolveBotReturn, resolveBotPaddleTarget } from "../shared/backspin-bot.js";
+import { BOT_MAX_OFF_TABLE_X, getBot, makeBrain, resetBrain, updateBrain, resolveBotServe, resolveBotReturn, resolveBotPaddleTarget } from "../shared/backspin-bot.js";
 import { otherSide as sharedOtherSide, currentServer as sharedCurrentServer, pointQuality as sharedPointQuality, resolveBouncePoint, resolveOutPoint } from "../shared/backspin-rules.js";
 import { applyStateBounce, detectStateNet, detectStateRacketContact, isStateBallOnTable, stepBallState } from "../shared/backspin-physics.js";
 import { authUserFromToken, type AuthUser } from "../auth/config.js";
@@ -538,7 +538,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const incoming = this.state.phase === "exchange" && this.state.ballVz < 0;
     const rawTarget = incoming ? this.predictBotContactX() : this.state.ballX * 0.25;
     const deterministicNoise = Math.sin((this.state.exchange + 1) * 2.17 + this.state.pointSeq * 0.73) * bot.error * TABLE.halfWidth;
-    const target = clamp(rawTarget * (0.45 + bot.skill * 0.55) + deterministicNoise, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+    const target = clamp(rawTarget * (0.45 + bot.skill * 0.55) + deterministicNoise, -BOT_MAX_OFF_TABLE_X, BOT_MAX_OFF_TABLE_X);
     input.vx = clamp((target - this.state.p2X) * 3.2, -8, 8);
     input.targetX = target;
     input.aimX = clamp((-this.state.p1X / TABLE.halfWidth) * (0.25 + bot.placement * 0.65) + deterministicNoise * 0.08, -0.95, 0.95);

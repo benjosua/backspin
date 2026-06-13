@@ -1,5 +1,8 @@
 import { TABLE, PHYSICS, clamp, sideDir, solveLegalServe, solveReachableShot, simulateReceiverContact } from './backspin-core.js';
 
+export const BOT_OFF_TABLE_MARGIN = 0.25;
+export const BOT_MAX_OFF_TABLE_X = TABLE.halfWidth + BOT_OFF_TABLE_MARGIN;
+
 export const BOTS = [
   { id: 'rookie', name: 'ROOKIE', tag: 'Still learning the table', minDepth: 0.58, maxDepth: 0.78, skill: 0.28, paddleSpeed: 7.6, react: 4.6, reactionDelay: 0.21, serveReact: 0.11, servePredict: 0.36, predict: 0.17, error: 0.17, spin: 0.2, aggression: 0.14, placement: 0.22, smashChance: 0, wrongFoot: 0, catchup: 0.95, confSwing: 0.12, serveSpin: 0.22 },
   { id: 'pro', name: 'PRO', tag: 'Brings real heat', skill: 0.68, paddleSpeed: 12.4, react: 7.8, reactionDelay: 0.07, predict: 0.74, error: 0.055, spin: 0.68, aggression: 0.55, placement: 0.62, smashChance: 0.48, wrongFoot: 0.22, catchup: 0.42, confSwing: 0.2, serveSpin: 0.78 },
@@ -168,7 +171,7 @@ export function resolveBotPaddleTarget({ side = 'p2', ball, velocity, spin, phas
     if (firstReturn && bot.servePredict != null) predict = Math.max(predict, bot.servePredict);
     const time = clamp((racketZ - ball.z) / (velocity.z || 0.000001), 0, 1.2);
     const predicted = ball.x + velocity.x * time + spin.side * 0.5 * PHYSICS.magnus * time * time;
-    target = clamp(ball.x + (predicted - ball.x) * predict, -TABLE.halfWidth - 0.4, TABLE.halfWidth + 0.4);
+    target = clamp(ball.x + (predicted - ball.x) * predict, -BOT_MAX_OFF_TABLE_X, BOT_MAX_OFF_TABLE_X);
   } else if (incoming) {
     target = currentX * 0.7;
   }
@@ -176,7 +179,7 @@ export function resolveBotPaddleTarget({ side = 'p2', ball, velocity, spin, phas
   if (deterministic) {
     target += Math.sin((exchange + 1) * 2.17 + pointSeq * 0.73) * bot.error * TABLE.halfWidth;
   }
-  return clamp(target, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+  return clamp(target, -BOT_MAX_OFF_TABLE_X, BOT_MAX_OFF_TABLE_X);
 }
 
 const CONTACT_RACKET_Z = 4.8;
@@ -188,6 +191,6 @@ export function stepBotPaddle({ racket, target, dt, bot, exchange = 0 }) {
   const react = bot.react * (1 - fatigue * 0.22);
   const desiredVx = clamp((target - racket.x) * 7, -maxSpeed, maxSpeed);
   racket.vx = smooth(racket.vx, desiredVx, react, dt);
-  racket.x = clamp(racket.x + racket.vx * dt, -TABLE.halfWidth - 0.5, TABLE.halfWidth + 0.5);
+  racket.x = clamp(racket.x + racket.vx * dt, -BOT_MAX_OFF_TABLE_X, BOT_MAX_OFF_TABLE_X);
   return racket;
 }

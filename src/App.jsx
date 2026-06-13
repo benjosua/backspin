@@ -3,7 +3,7 @@
 import { Suspense, lazy, useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Preload } from '@react-three/drei';
-import { ACESFilmicToneMapping } from 'three';
+import { ACESFilmicToneMapping, PCFSoftShadowMap } from 'three';
 import { DEBUG_MODE, useGameStore } from './store.js';
 import { CAMERA } from './constants.js';
 import { perfSettings, perfHudEnabled } from './performance.js';
@@ -114,7 +114,7 @@ export default function App() {
     <DesktopOnlyGate>
       <div className="fixed inset-0 overflow-hidden bg-background">
       <Canvas
-        shadows={renderScale !== 'low'}
+        shadows={renderScale !== 'low' ? { type: PCFSoftShadowMap } : false}
         dpr={[0.7, targetDpr]}
         gl={{ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false }}
         camera={{

@@ -18,6 +18,7 @@ import {
   solveShot,
   stepPaddleX,
 } from "../src/shared/backspin-core.js";
+import { BOT_MAX_OFF_TABLE_X, getBot, resolveBotPaddleTarget, stepBotPaddle } from "../src/shared/backspin-bot.js";
 
 function waitFor(check: () => boolean | Promise<boolean>, label: string, timeoutMs = 1000) {
   const startedAt = Date.now();
@@ -310,6 +311,26 @@ describe("backspin room", () => {
     assert.strictEqual(shot.reachAdjusted, false);
     assert.strictEqual(shot.target.x, 0);
     assert.strictEqual(shot.spin.side, 0);
+  });
+
+  it("keeps bot paddle movement inside the bot off-table lane", () => {
+    const target = resolveBotPaddleTarget({
+      side: "p2",
+      ball: { x: 8, y: 1, z: 0 },
+      velocity: { x: 12, y: 0, z: -4 },
+      spin: { top: 0, side: 1 },
+      phase: "exchange",
+      lastHitter: "p1",
+      exchange: 1,
+      bot: getBot("master"),
+      currentX: 0,
+    });
+    const racket = { x: BOT_MAX_OFF_TABLE_X + 1, vx: 20 };
+
+    stepBotPaddle({ racket, target: BOT_MAX_OFF_TABLE_X + 2, dt: 1 / 60, bot: getBot("master"), exchange: 1 });
+
+    assert.ok(Math.abs(target) <= BOT_MAX_OFF_TABLE_X, `bot target too wide: ${target}`);
+    assert.ok(Math.abs(racket.x) <= BOT_MAX_OFF_TABLE_X, `bot paddle too wide: ${racket.x}`);
   });
 
   it("keeps representative player shots within receiver max reach when catchable", () => {
