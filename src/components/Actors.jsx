@@ -20,6 +20,7 @@ import { perfSettings } from '../performance.js';
 import { arenaFx, clampDt, damp } from '../fx-state.js';
 import { getDebugTime } from '../debug-tuning.js';
 import { game, inputHud } from '../engine.js';
+import { POINT_RESET_DELAY_SECONDS } from '../../shared/backspin-core.js';
 import { replayGame } from '../replay.js';
 import { gameDrivers, getActiveGameDriver } from '../game-drivers.js';
 import { DEBUG_MODE, useGameStore } from '../store.js';
@@ -154,7 +155,7 @@ const Ball = forwardRef(function Ball({ extraFx }, ref) {
   const ballMesh = (
     <mesh ref={mesh}>
       <sphereGeometry args={[TABLE.ballRadius, 24, 18]} />
-      <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.08} roughness={0.48} metalness={0} />
+      <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.08} roughness={0.48} metalness={0} transparent />
     </mesh>
   );
   if (!extraFx) return <group ref={group}>{ballMesh}</group>;
@@ -773,6 +774,13 @@ export function Actors() {
       const speed = activeGame.vel.length();
       ball.current.mesh.current.material.emissiveIntensity = 0.08 + Math.min(speed / 26, 1) * 0.18;
       const currentPhase = useGameStore.getState().phase;
+      const pointFade = currentPhase === 'point'
+        ? Math.min(
+            Math.max(0, Math.min(1, (activeGame.pointVisualT ?? POINT_RESET_DELAY_SECONDS) / 0.45)),
+            Math.max(0, Math.min(1, (activeGame.ball.y + 0.45) / 0.3)),
+          )
+        : 1;
+      ball.current.mesh.current.material.opacity = pointFade;
       const serving = currentPhase === 'serve';
       if (serving !== (phase.current === 'serve')) trailAmount.current = 0;
       phase.current = currentPhase;
@@ -784,7 +792,7 @@ export function Actors() {
         if (material) {
           material.transparent = true;
           material.depthWrite = false;
-          material.opacity = trailFade;
+          material.opacity = trailFade * pointFade;
         }
       }
     }

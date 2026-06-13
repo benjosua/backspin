@@ -1,6 +1,6 @@
 import { Room, Client, ServerError, ErrorCode } from "colyseus";
 import { BackspinState } from "./schema/BackspinState.js";
-import { NET, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, getEmote, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
+import { NET, POINT_RESET_DELAY_SECONDS, TABLE as CORE_TABLE, PHYSICS as CORE_PHYSICS, getEmote, resolvePlayerShot, solveLegalServe, stepPaddleX } from "../shared/backspin-core.js";
 import { getBot, makeBrain, resetBrain, updateBrain, resolveBotServe, resolveBotReturn, resolveBotPaddleTarget } from "../shared/backspin-bot.js";
 import { otherSide as sharedOtherSide, currentServer as sharedCurrentServer, pointQuality as sharedPointQuality, resolveBouncePoint, resolveOutPoint } from "../shared/backspin-rules.js";
 import { applyStateBounce, detectStateNet, detectStateRacketContact, isStateBallOnTable, stepBallState } from "../shared/backspin-physics.js";
@@ -445,10 +445,13 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private point(winner: Side, reason: string) {
     if (this.state.phase !== "exchange" && this.state.phase !== "serve") return;
     this.state.phase = "point";
-    this.pointTimer = 1;
+    this.pointTimer = POINT_RESET_DELAY_SECONDS;
     this.state.pointSeq += 1;
     this.state.pointWinner = winner;
     this.state.pointReason = reason;
+    this.state.p1Charge = 0;
+    this.state.p2Charge = 0;
+    for (const input of this.inputs.values()) input.charging = false;
     if (winner === "p1") this.state.scoreP1 += 1;
     else this.state.scoreP2 += 1;
     if (this.botEnabled) updateBrain(this.botBrain, winner === "p2", sharedPointQuality(reason, this.state.exchange));
@@ -563,12 +566,13 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       if (!side) continue;
       const current = side === "p1" ? this.state.p1X : this.state.p2X;
       const { x: next } = stepPaddleX(current, input.targetX, dt, input.speed);
+      const canCharge = this.state.phase === "exchange" || (this.state.phase === "serve" && this.state.server === side);
       if (side === "p1") {
         this.state.p1X = next;
-        this.state.p1Charge = input.charging ? clamp(this.state.p1Charge + dt * 0.95, 0, 1) : 0;
+        this.state.p1Charge = input.charging && canCharge ? clamp(this.state.p1Charge + dt * 0.95, 0, 1) : 0;
       } else {
         this.state.p2X = next;
-        this.state.p2Charge = input.charging ? clamp(this.state.p2Charge + dt * 0.95, 0, 1) : 0;
+        this.state.p2Charge = input.charging && canCharge ? clamp(this.state.p2Charge + dt * 0.95, 0, 1) : 0;
       }
     }
 
@@ -580,6 +584,10 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
       return;
     }
     if (this.state.phase === "point") {
+      stepBallState(this.state, dt);
+      if (this.state.ballVy < 0 && this.state.ballY <= TABLE.ballRadius && isStateBallOnTable(this.state)) {
+        applyStateBounce(this.state);
+      }
       this.pointTimer -= dt;
       if (this.pointTimer <= 0) this.resetServe();
       return;

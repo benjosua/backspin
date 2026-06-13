@@ -14,7 +14,7 @@ import {
 import { DEBUG_MODE, debugFlags, randomSide, useGameStore } from './store.js';
 import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js';
 import { initAudio, playBounce, playCharge, playHit, playMenu, playNet } from './audio.js';
-import { predictBounceKick, resolvePlayerShot, simulateReceiverContact, solveLegalServe, solveReachableShot } from '../shared/backspin-core.js';
+import { POINT_RESET_DELAY_SECONDS, predictBounceKick, resolvePlayerShot, simulateReceiverContact, solveLegalServe, solveReachableShot } from '../shared/backspin-core.js';
 import { otherSide as sharedOtherSide, currentServer as sharedCurrentServer, pointQuality as sharedPointQuality, resolveBouncePoint, resolveOutPoint } from '../shared/backspin-rules.js';
 import { applyBounce, detectNet, detectRacketContact, stepBall } from '../shared/backspin-physics.js';
 import { applyMarkerPrediction, makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
@@ -121,6 +121,7 @@ export class GameEngine {
     this.serveBounceCount = 0;
     this.exchange = 0;
     this.pointTimer = 0;
+    this.pointVisualT = 0;
     this.aiServeTimer = 0;
     this.shake = 0;
     this.overT = 0;
@@ -247,6 +248,7 @@ export class GameEngine {
 
   resetServe() {
     this.exchange = 0;
+    this.pointVisualT = 0;
     this.lastHitter = null;
     this.bouncedReceiver = false;
     this.serveBounceCount = 0;
@@ -278,7 +280,12 @@ export class GameEngine {
     const store = useGameStore.getState();
     if (store.phase !== 'exchange' && store.phase !== 'serve') return;
     store.setPhase('point');
-    this.pointTimer = 1;
+    this.pointTimer = POINT_RESET_DELAY_SECONDS;
+    this.pointVisualT = POINT_RESET_DELAY_SECONDS;
+    this.charge = 0;
+    this.charging = false;
+    inputHud.charge = 0;
+    inputHud.charging = false;
     store.bumpScore(winner);
     const { scoreP, scoreAI } = useGameStore.getState();
     const ace = reason === 'WINNER' && this.exchange === 0;
@@ -848,6 +855,7 @@ export class GameEngine {
           this.vel.z *= 0.9;
         }
         this.pointTimer -= dt;
+        this.pointVisualT = Math.max(0, this.pointTimer);
         if (this.pointTimer <= 0 && useGameStore.getState().phase === 'point') this.resetServe();
       }
     }

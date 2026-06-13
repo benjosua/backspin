@@ -232,6 +232,38 @@ describe("backspin room", () => {
     await client.leave();
   });
 
+  it("keeps simulating the ball briefly after an online point", async () => {
+    const room = await colyseus.createRoom<any>("backspin", { mode: "bot", botDifficulty: "rookie" });
+    const client = await colyseus.connectTo(room, { name: "PLAYER" });
+    client.onMessage("fx", () => {});
+
+    await waitFor(() => room.state.joined === 2, "bot room ready");
+    room.state.phase = "exchange";
+    room.lastHitter = "p1";
+    room.bouncedReceiver = true;
+    room.state.ballX = 0;
+    room.state.ballY = 1;
+    room.state.ballZ = 1;
+    room.state.ballVx = 0.3;
+    room.state.ballVy = -1;
+    room.state.ballVz = 4;
+    room.state.p1Charge = 0.7;
+    room.state.p2Charge = 0.6;
+
+    room.point("p1", "WINNER");
+    const zAtPoint = room.state.ballZ;
+    room.update(1 / 60);
+
+    assert.strictEqual(room.state.phase, "point");
+    assert.strictEqual(room.state.p1Charge, 0);
+    assert.strictEqual(room.state.p2Charge, 0);
+    assert.ok(room.state.ballZ > zAtPoint, "ball should keep moving during point phase");
+
+    for (let i = 0; i < 60; i += 1) room.update(1 / 60);
+    assert.strictEqual(room.state.phase, "serve");
+    await client.leave();
+  });
+
   it("uses one shared 60hz paddle step for prediction and authority", () => {
     const step = stepPaddleX(0, 3, NET.tickMs / 1000, 1);
 

@@ -5,7 +5,7 @@ import { arenaFx, clampDt, damp, decayFx, raiseFx, resetFx } from './fx-state.js
 import { inputHud, resetInputHud } from './engine.js';
 import { useGameStore } from './store.js';
 import { initAudio, playBounce, playHit, playMenu, playNet } from './audio.js';
-import { NET, getEmote, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
+import { NET, POINT_RESET_DELAY_SECONDS, getEmote, predictBounceKick, stepPaddleX } from '../shared/backspin-core.js';
 import { predictBall as predictSharedBall } from '../shared/backspin-physics.js';
 import { applyMarkerPrediction, makeAim, makeMarker, makeRacket, makeShadow, updateShadow, resetMarker } from '../shared/backspin-view-model.js';
 import { applyPointerVelocity, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
@@ -107,6 +107,7 @@ class NetworkGame {
     this.patchIntervalMs = NET.patchMs;
     this.snapNext = true;
     this.lastPointSeq = 0;
+    this.pointVisualT = 0;
     this.spin = { top: 0, side: 0 };
     this.player = makeRacket('player', 4.8);
     this.ai = makeRacket('ai', -4.8);
@@ -339,10 +340,14 @@ class NetworkGame {
     const status = s.phase === 'waiting' ? 'waiting' : 'connected';
     if (s.pointSeq && s.pointSeq !== this.lastPointSeq) {
       this.lastPointSeq = s.pointSeq;
+      this.pointVisualT = s.phase === 'point' ? POINT_RESET_DELAY_SECONDS : 0;
+      this.charging = false;
+      this.charge = 0;
       const localWon = s.pointWinner === local;
       const label = s.pointReason === 'WINNER' && s.exchange === 0 ? 'ACE' : s.pointReason;
       useGameStore.getState().flash(label || (localWon ? 'POINT' : 'POINT'), localWon ? COLORS.player : COLORS.ai);
     }
+    if (s.phase !== 'point') this.pointVisualT = 0;
     useGameStore.getState().syncOnlineState({
       scoreP,
       scoreAI,
@@ -376,10 +381,10 @@ class NetworkGame {
     }
     this.spin.top = s.spinTop;
     this.spin.side = s.spinSide * flip;
-    this.charge = localIsP1 ? s.p1Charge : s.p2Charge;
+    this.charge = s.phase === 'point' ? 0 : localIsP1 ? s.p1Charge : s.p2Charge;
     this.ai.tell = localIsP1 ? s.p2Charge : s.p1Charge;
     inputHud.charge = this.charge;
-    inputHud.charging = this.charging;
+    inputHud.charging = s.phase === 'point' ? false : this.charging;
     inputHud.exchange = s.exchange;
   }
 
@@ -483,11 +488,12 @@ class NetworkGame {
     this.ai.vx = (this.ai.x - this.ai.prevX) / Math.max(dt, 0.0001);
     this.renderTargetBall.copy(this.targetBall);
     this.predictedVel.copy(this.targetVel);
+    if (store.phase === 'point') this.pointVisualT = Math.max(0, this.pointVisualT - dt);
     if (store.phase === 'serve') {
       const racket = store.server === 'player' ? this.player : this.ai;
       this.renderTargetBall.set(racket.x, PADDLE_Y + 0.34, racket.baseZ + (racket.who === 'player' ? -0.45 : 0.45));
       this.predictedVel.set(0, 0, 0);
-    } else if (store.phase === 'exchange') {
+    } else if (store.phase === 'exchange' || store.phase === 'point') {
       const sincePatch = Math.max(0, (performance.now() - this.lastPatchAt) / 1000);
       const lead = clamp((this.patchIntervalMs + this.rttMs * 0.35) / 1000, SERVER_BALL_LEAD_MIN, SERVER_BALL_LEAD_MAX);
       this.predictBall(this.renderTargetBall, this.predictedVel, sincePatch + lead);
@@ -496,8 +502,9 @@ class NetworkGame {
     else this.ball.lerp(this.renderTargetBall, ballEase);
     this.vel.lerp(this.predictedVel, 1 - Math.exp(-48 * dt));
 
-    inputHud.charge = this.charge;
-    inputHud.charging = this.charging;
+    const canInfluence = store.phase === 'exchange' || (store.phase === 'serve' && store.server === 'player');
+    inputHud.charge = canInfluence ? this.charge : 0;
+    inputHud.charging = canInfluence && this.charging;
     inputHud.aimX = this.aimX;
     inputHud.aimDepth = this.aimDepth;
     inputHud.aimLabel = `${this.aimX < -0.25 ? 'LEFT' : this.aimX > 0.25 ? 'RIGHT' : 'CENTER'} · ${this.aimDepth < 0.35 ? 'SHORT' : this.aimDepth > 0.7 ? 'DEEP' : 'MID'}`;
@@ -516,7 +523,7 @@ class NetworkGame {
     this.ballRotX -= (2 + this.spin.top * 16) * dt;
     this.ballRotY += this.spin.side * 14 * dt;
     updateShadow(this.shadow, this.ball, TABLE);
-    const aiming = store.phase === 'exchange' || (store.phase === 'serve' && store.server === 'player');
+    const aiming = canInfluence;
     this.aim.x = this.aimX * TABLE.halfWidth * 0.96;
     this.aim.z = -(0.08 + this.aimDepth * 0.88) * TABLE.halfLength;
     this.aim.op = aiming ? clamp(0.12 + this.charge * 0.6, 0, 0.78) : 0;

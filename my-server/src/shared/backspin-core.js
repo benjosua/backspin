@@ -32,6 +32,8 @@ export const NET = {
   paddleInset: 0.5,
 };
 
+export const POINT_RESET_DELAY_SECONDS = 0.8;
+
 export const EMOTES = {
   1: '👍',
   2: '😅',
@@ -629,6 +631,7 @@ export function predictBounceKick(ball, velocity, spin) {
 export const BackspinCore = {
   CONTACT,
   NET,
+  POINT_RESET_DELAY_SECONDS,
   clampPaddleX,
   maxReachableContactX,
   stepPaddleX,
