@@ -3,14 +3,9 @@
 import './index.css';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { configureTextBuilder } from 'troika-three-text';
 import { bootstrapDebugTuning } from './debug-tuning.js';
 
 bootstrapDebugTuning();
-
-configureTextBuilder({
-  unicodeFontsURL: `${globalThis.location.origin}/vendor/unicode-font-resolver/packages/data`,
-});
 
 const { default: App } = await import('./App.jsx');
 
