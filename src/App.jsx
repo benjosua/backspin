@@ -2,6 +2,7 @@
 
 import { Suspense, lazy, useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
+import { PCFSoftShadowMap } from 'three';
 import { Preload } from '@react-three/drei';
 import { DEBUG_MODE, useGameStore } from './store.js';
 import { CAMERA } from './constants.js';
@@ -109,7 +110,7 @@ export default function App() {
       <div className="fixed inset-0 overflow-hidden bg-background">
       <Canvas
         flat
-        shadows
+        shadows={{ type: PCFSoftShadowMap }}
         dpr={[1, targetDpr]}
         gl={{ antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false }}
         camera={{

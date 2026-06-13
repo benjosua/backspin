@@ -118,6 +118,8 @@ function DebugControls({ remount, store }) {
       'LightingPost.AmbientColor': defaults.tuning.lighting.ambColor,
       'LightingPost.Key': defaults.tuning.lighting.key,
       'LightingPost.KeyColor': defaults.tuning.lighting.keyColor,
+      'LightingPost.Fill': defaults.tuning.lighting.fill,
+      'LightingPost.FillColor': defaults.tuning.lighting.fillColor,
       'NetTrail.NetColor': defaults.tuning.net.color,
       'NetTrail.NetOpacity': defaults.tuning.net.opacity,
       'NetTrail.TrailWidth': defaults.tuning.ballTrail.width,
@@ -264,6 +266,8 @@ function DebugControls({ remount, store }) {
       AmbientColor: control('tuning.lighting.ambColor'),
       Key: control('tuning.lighting.key', { min: 0, max: 12, step: 0.01 }),
       KeyColor: control('tuning.lighting.keyColor'),
+      Fill: control('tuning.lighting.fill', { min: 0, max: 4, step: 0.01 }),
+      FillColor: control('tuning.lighting.fillColor'),
     }, { collapsed: true }),
 
     NetTrail: folder({

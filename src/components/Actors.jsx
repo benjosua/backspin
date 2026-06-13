@@ -168,7 +168,7 @@ const Ball = forwardRef(function Ball({ extraFx }, ref) {
   const config = TUNING.ballTrail;
   const ballMesh = (
     <mesh ref={mesh}>
-      <sphereGeometry args={[TABLE.ballRadius, 24, 18]} />
+      <sphereGeometry args={[TABLE.ballRadius, 18, 12]} />
       <meshStandardMaterial color={COLORS.ball} emissive={COLORS.ball} emissiveIntensity={0.22} roughness={0.42} metalness={0} />
     </mesh>
   );

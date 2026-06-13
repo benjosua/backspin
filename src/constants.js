@@ -88,7 +88,7 @@ export const TUNING = {
     ringOpacity: 0.8,
   },
   sky: { zenith: '#ddb9a3', edge: '#ffe9cf', horizon: 0.58 },
-  lighting: { ambient: 1.84, ambColor: '#ef8f87', key: 5, keyColor: '#ffffff' },
+  lighting: { ambient: 1.84, ambColor: '#ef8f87', key: 5, keyColor: '#ffffff', fill: 0.55, fillColor: '#b8cfe8' },
   net: { opacity: 1, color: '#fbf7ee' },
   ballTrail: { width: 4.2, length: 6, decay: 5, color: '#ffffff', attenuationPower: 3.2, local: false, stride: 0, interval: 1 },
   menu: { titleColor: '#fff3e0', titleBoost: 1.35, titleGlowColor: '#ef8f87', titleGlow: 0.45, titleSize: 2.55, titleTracking: 0.24, titleY: 4.9, glassOpacity: 0.86, glassRim: 0.72, cardOpacity: 0.92 },

@@ -12,6 +12,7 @@ import { MONTSERRAT_FONT_URL } from '../fonts.js';
 import { BOTS, TABLE, TUNING } from '../constants.js';
 import { skyFragmentShader, skyVertexShader } from '../shaders.js';
 import { getDebugTime } from '../debug-tuning.js';
+import { perfSettings } from '../performance.js';
 
 const ktx2Loader = new KTX2Loader().setTranscoderPath('/basis/');
 const tableUrl = '/table-baked.glb';
@@ -46,14 +47,6 @@ export function WorldBackground() {
     }
   }, [scene]);
 
-  useFrame(() => {
-    scene.background?.set?.(TUNING.world.background);
-    if (scene.fog) {
-      scene.fog.color.set(TUNING.world.fog);
-      scene.fog.density = TUNING.world.fogDensity;
-    }
-  });
-
   return (
     <>
       <color attach="background" args={[TUNING.world.background]} />
@@ -68,6 +61,7 @@ const tmpColor = new Color();
 
 export function Lights() {
   const key = useRef(null);
+  const fill = useRef(null);
   const ambient = useRef(null);
 
   useFrame((_, delta) => {
@@ -85,11 +79,17 @@ export function Lights() {
       key.current.color.lerp(tmpColor, 1 - Math.exp(dt * -12));
     }
 
+    if (fill.current) {
+      fill.current.intensity = damp(fill.current.intensity, config.fill + heat * 0.08 + flash * 0.12, 12, dt);
+    }
+
     if (ambient.current) {
       ambient.current.intensity = damp(ambient.current.intensity, config.ambient + heat * 0.12 + flash * 0.22, 12, dt);
       ambient.current.color.set(config.ambColor);
     }
   });
+
+  const shadowSize = perfSettings.shadowMapSize;
 
   return (
     <>
@@ -100,15 +100,23 @@ export function Lights() {
         intensity={TUNING.lighting.key}
         color={TUNING.lighting.keyColor}
         castShadow
-        shadow-mapSize={[1024, 1024]}
-        shadow-camera-left={-7}
-        shadow-camera-right={7}
-        shadow-camera-top={8}
-        shadow-camera-bottom={-8}
+        shadow-mapSize={[shadowSize, shadowSize]}
+        shadow-camera-left={-5}
+        shadow-camera-right={5}
+        shadow-camera-top={6}
+        shadow-camera-bottom={-6}
         shadow-camera-near={2}
         shadow-camera-far={16}
         shadow-bias={-0.0002}
         shadow-normalBias={0.02}
+        shadow-radius={2}
+      />
+      <directionalLight
+        ref={fill}
+        position={[-3, 5, -4]}
+        intensity={TUNING.lighting.fill}
+        color={TUNING.lighting.fillColor}
+        castShadow={false}
       />
     </>
   );
