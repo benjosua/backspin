@@ -4,13 +4,11 @@ import { COLORS, TABLE } from './constants.js';
 import { clampDt, damp, decayFx, resetFx } from './fx-state.js';
 import { inputHud, resetInputHud, setInputCallout, decayInputCallout, syncCursorScreen as syncInputCursorScreen } from './view-state.js';
 import { useGameStore } from './store.js';
-import { initAudio } from './audio.js';
-import { NET, POINT_RESET_DELAY_SECONDS, getEmote, stepPaddleX } from '../shared/backspin-core.js';
+import { initAudio, playHit } from './audio.js';
+import { CONTACT, NET, POINT_RESET_DELAY_SECONDS, getEmote, sampleBallPlan, stepPaddleX } from '../shared/backspin-core.js';
 import { predictBall as predictSharedBall } from '../shared/backspin-physics.js';
 import { applyPointerVelocity, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
 import {
-  applyGameplayFx,
-  assignDriverViewState,
   serveBallForRacket,
   syncGameplayAimAndHud,
   updateArenaVisuals,
@@ -135,6 +133,9 @@ class NetworkGame extends PlayableDriver {
     this.lastPing = 0;
     this.rttMs = 66;
     this.leaving = false;
+    this.clientBallPlan = null;
+    this.predictedHitPlanId = 0;
+    this.predictedHitAt = 0;
   }
 
   isConnected() { return !!this.room; }
@@ -242,16 +243,9 @@ class NetworkGame extends PlayableDriver {
     });
     room.onMessage('fx', (message) => {
       const flip = this.side === 'p2' ? -1 : 1;
-      if (message.type === 'bounce') {
-        applyGameplayFx(this, { ...message, x: (message.x || 0) * flip, z: (message.z || 0) * flip }, { pointLabel: '' });
-      }
-      if (message.type === 'hit') {
-        applyGameplayFx(this, message, { exchange: this.remoteState?.exchange || 0, sideColor: (side) => side === this.side ? COLORS.player : COLORS.ai, pointLabel: '' });
-      }
-      if (message.type === 'point') {
-        applyGameplayFx(this, message, { winnerIsLocal: (side) => side === this.side, pointLabel: '' });
-      }
-      if (message.type === 'net') applyGameplayFx(this, message, { pointLabel: '' });
+      const event = message.type === 'bounce' ? { ...message, x: (message.x || 0) * flip, z: (message.z || 0) * flip } : message;
+      const suppressPredictedLocalHitAudio = message.type === 'hit' && message.side === this.side && performance.now() - this.predictedHitAt < 280;
+      this.processGameEvent(event, { exchange: this.remoteState?.exchange || 0, playAudio: !suppressPredictedLocalHitAudio });
     });
     room.onMessage('emote', (message) => {
       const emoji = getEmote(message?.emoteId) || message?.emoji;
@@ -309,11 +303,16 @@ class NetworkGame extends PlayableDriver {
     }
     this.side = null;
     this.remoteState = null;
+    this.clientBallPlan = null;
     resetInputHud();
     useGameStore.getState().setOnlineRematchRequested(false);
     this.leaving = false;
     if (goHome) useGameStore.getState().goHome();
   }
+
+  sideColor(side) { return side === this.side ? COLORS.player : COLORS.ai; }
+
+  winnerIsLocal(side) { return side === this.side; }
 
   syncFromState(s) {
     if (!s || s.roomCode == null) return;
@@ -342,17 +341,15 @@ class NetworkGame extends PlayableDriver {
       useGameStore.getState().flash(label || (localWon ? 'POINT' : 'POINT'), localWon ? COLORS.player : COLORS.ai);
     }
     if (s.phase !== 'point') this.pointVisualT = 0;
-    useGameStore.getState().syncOnlineState({
-      scoreP,
-      scoreAI,
-      phase: s.phase === 'waiting' ? 'serve' : s.phase,
-      server,
-      winner,
-      playerName: localName || playerName(),
-      opponentName: opponentName || 'OPPONENT',
-      networkStatus: status,
-      roomCode: s.roomCode,
-      currentMatchId: s.matchId || '',
+    this.syncPlayStore({ scoreP, scoreAI, phase: s.phase === 'waiting' ? 'serve' : s.phase, server, winner }, {
+      setter: 'syncOnlineState',
+      extra: {
+        playerName: localName || playerName(),
+        opponentName: opponentName || 'OPPONENT',
+        networkStatus: status,
+        roomCode: s.roomCode,
+        currentMatchId: s.matchId || '',
+      },
     });
 
     const flip = localIsP1 ? 1 : -1;
@@ -375,6 +372,7 @@ class NetworkGame extends PlayableDriver {
     }
     this.spin.top = s.spinTop;
     this.spin.side = s.spinSide * flip;
+    this.clientBallPlan = this.buildClientBallPlan(s, flip, patchNow);
     this.charge = s.phase === 'point' ? 0 : localIsP1 ? s.p1Charge : s.p2Charge;
     this.ai.tell = localIsP1 ? s.p2Charge : s.p1Charge;
     inputHud.charge = this.charge;
@@ -407,8 +405,64 @@ class NetworkGame extends PlayableDriver {
     return false;
   }
   
+  buildClientBallPlan(s, flip, patchNow) {
+    if (!s?.ballPlanJSON) return null;
+    let plan;
+    try {
+      plan = JSON.parse(s.ballPlanJSON);
+    } catch {
+      return null;
+    }
+    if (!plan?.id) return null;
+
+    const serverStartMs = Number(plan.startMs) || 0;
+    const startMs = patchNow - (Number(plan.elapsedMs) || 0);
+    const flipPoint = (point) => point ? { ...point, x: (Number(point.x) || 0) * flip, z: (Number(point.z) || 0) * flip } : point;
+    const flipVelocity = (velocity) => velocity ? { x: (Number(velocity.x) || 0) * flip, y: Number(velocity.y) || 0, z: (Number(velocity.z) || 0) * flip } : velocity;
+    const flipSpin = (spin) => spin ? { top: Number(spin.top) || 0, side: (Number(spin.side) || 0) * flip } : spin;
+    return {
+      ...plan,
+      startMs,
+      start: flipPoint(plan.start),
+      velocity: flipVelocity(plan.velocity),
+      spin: flipSpin(plan.spin),
+      target: flipPoint(plan.target),
+      contact: flipPoint(plan.contact),
+      segments: (plan.segments || []).map((seg) => ({
+        ...seg,
+        atMs: startMs + Math.max(0, (Number(seg.atMs) || 0) - serverStartMs),
+        x: (Number(seg.x) || 0) * flip,
+        z: (Number(seg.z) || 0) * flip,
+        afterVelocity: flipVelocity(seg.afterVelocity),
+        afterSpin: flipSpin(seg.afterSpin),
+      })),
+    };
+  }
+
   predictBall(ball, vel, seconds) {
+    if (this.clientBallPlan) {
+      const sample = sampleBallPlan(this.clientBallPlan, performance.now() + seconds * 1000);
+      ball.set(sample.x, sample.y, sample.z);
+      vel.set(sample.vx || 0, sample.vy || 0, sample.vz || 0);
+      this.spin.top = sample.spinTop || 0;
+      this.spin.side = sample.spinSide || 0;
+      return;
+    }
     predictSharedBall(ball, vel, { top: this.spin.top, side: this.spin.side }, seconds, SERVER_BALL_LEAD_MAX + 0.05);
+  }
+
+  maybePlayPredictedLocalHit() {
+    if (!this.room || !this.clientBallPlan || this.predictedHitPlanId === this.clientBallPlan.id || !this.charging) return;
+    const store = useGameStore.getState();
+    if (store.phase !== 'exchange') return;
+    const incoming = this.remoteState?.lastHitter && this.remoteState.lastHitter !== this.side;
+    if (!incoming) return;
+    if (this.vel.z <= 0 || this.ball.z < CONTACT.racketZ - 0.75 || this.ball.z > CONTACT.racketZ + 0.25) return;
+    if (this.ball.y < CONTACT.minY || this.ball.y > CONTACT.maxY) return;
+    if (Math.abs(this.ball.x - this.player.x) > CONTACT.reachX + CONTACT.assistX) return;
+    this.predictedHitPlanId = this.clientBallPlan.id;
+    this.predictedHitAt = performance.now();
+    playHit(this.charge || 0.4, this.remoteState?.exchange || 0);
   }
 
   update(dt, time, camera, effects) {
@@ -469,13 +523,20 @@ class NetworkGame extends PlayableDriver {
     else this.ball.lerp(this.renderTargetBall, ballEase);
     this.vel.lerp(this.predictedVel, 1 - Math.exp(-48 * dt));
 
-    const canInfluence = store.phase === 'exchange' || (store.phase === 'serve' && store.server === 'player');
-    syncGameplayAimAndHud(this, { charge: this.charge, charging: this.charging, exchange: this.remoteState?.exchange || 0, canInfluence });
-
-    updateGameplayPaddles(this, dt, { playerIncoming: store.phase === 'exchange' && this.vel.z > 0, aiIncoming: store.phase === 'exchange' && this.vel.z < 0 });
+    this.maybePlayPredictedLocalHit();
+    const playerIncoming = store.phase === 'exchange' && (this.remoteState?.lastHitter ? this.remoteState.lastHitter !== this.side : this.vel.z > 0);
+    const aiIncoming = store.phase === 'exchange' && (this.remoteState?.lastHitter ? this.remoteState.lastHitter === this.side : this.vel.z < 0);
+    const exchange = this.remoteState?.exchange || 0;
+    syncGameplayAimAndHud(this, {
+      charge: this.charge,
+      charging: this.charging,
+      exchange,
+      canInfluence: store.phase === 'exchange' || (store.phase === 'serve' && store.server === 'player'),
+    });
+    updateGameplayPaddles(this, dt, { playerIncoming, aiIncoming });
     updateBallVisuals(this, dt);
-    updateProjectionVisual(this, { phase: store.phase });
-    updateArenaVisuals(this, store.phase, this.remoteState?.exchange || 0, this.charge, dt, time, { raiseOverScore: true });
+    updateProjectionVisual(this, { phase: store.phase, incoming: playerIncoming });
+    updateArenaVisuals(this, store.phase, exchange, this.charge, dt, time, { raiseOverScore: true });
     updateGameplayCamera(this, dt, time);
   }
 }

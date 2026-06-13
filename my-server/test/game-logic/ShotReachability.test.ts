@@ -42,21 +42,27 @@ function targetZ(side: Side, depth: number) {
 function assertTargeted(label: string, side: Side, ball: { x: number; y: number; z: number }, shot: Shot) {
   const contact = simulateReceiverContact(ball, shot.velocity, shot.spin.top, shot.spin.side, side);
   assert.ok(Number.isFinite(shot.velocity.x) && Number.isFinite(shot.velocity.y) && Number.isFinite(shot.velocity.z), `${label}: non-finite velocity`);
-  if (!contact.bounce) return;
+  assert.ok(contact.bounce, `${label}: shot should have a first bounce`);
   assert.ok(Math.abs(contact.bounce!.x) <= TABLE.halfWidth * 0.98, `${label}: bounce x off table ${contact.bounce!.x}`);
   assert.ok(Math.sign(contact.bounce!.z) === (side === "p1" ? -1 : 1), `${label}: bounce on wrong side ${contact.bounce!.z}`);
+  assert.ok(contact.contact, `${label}: shot should produce receiver contact`);
+  assert.ok(contact.catchableHeight, `${label}: contact should be playable height ${JSON.stringify(contact.contact)}`);
+  assert.ok(contact.contact!.y >= TABLE.ballRadius - 0.000001, `${label}: contact below table ${JSON.stringify(contact.contact)}`);
+  assert.ok(Math.abs(contact.contact!.x) <= maxReachableContactX() + 0.000001, `${label}: contact outside max reach ${JSON.stringify(contact.contact)} max=${maxReachableContactX()}`);
 }
 
 describe("game logic shot reachability", () => {
 
   it("uses wider movement area with a more realistic paddle hitbox", () => {
-    const widenedMovementEdge = TABLE.halfWidth + 8;
+    const movementEdge = TABLE.halfWidth + NET.paddleInset;
     const visualPaddleHalfWidth = 0.56;
     const visualHitAllowance = visualPaddleHalfWidth + TABLE.ballRadius + 0.07;
 
-    assert.strictEqual(clampPaddleX(widenedMovementEdge), widenedMovementEdge, "player paddle movement should extend wider than the old 0.5 table inset");
-    assert.ok(BOT_MAX_OFF_TABLE_X >= widenedMovementEdge, "bot movement clamp should match widened player movement");
-    assert.ok(maxReachableContactX() >= 11.5, "wider movement area should cover extreme spin contact paths without enlarging hitbox");
+    assert.strictEqual(clampPaddleX(movementEdge), movementEdge, "player paddle movement should extend to the configured off-table inset");
+    assert.strictEqual(clampPaddleX(movementEdge + 0.01), movementEdge, "player paddle movement should clamp outside the configured inset");
+    assert.ok(BOT_MAX_OFF_TABLE_X >= movementEdge, "bot movement clamp should match player movement");
+    assert.ok(maxReachableContactX() >= movementEdge + CONTACT.reachX, "movement area should include paddle hitbox reach");
+    assert.ok(maxReachableContactX() < TABLE.halfWidth + 8, "movement area should not allow old oversized off-table travel");
     assert.ok(CONTACT.reachX <= visualHitAllowance, `paddle hitbox too wide: ${CONTACT.reachX}`);
     assert.ok(CONTACT.assistX <= 0.1, `assist hitbox too forgiving: ${CONTACT.assistX}`);
   });
@@ -65,9 +71,9 @@ describe("game logic shot reachability", () => {
     const state = createGame({ firstServer: "p1", nowMs: 0 });
     state.phase = "exchange";
     state.lastHitter = "p2";
-    state.players.p1.x = 3.35;
-    state.players.p1.targetX = 3.35;
-    submitInput(state, { side: "p1", targetX: 3.35, aimX: -1, aimDepth: 0, swipeX: -8, swipeY: 4, charging: true, speed: 1.6 });
+    state.players.p1.x = 2.5;
+    state.players.p1.targetX = 2.5;
+    submitInput(state, { side: "p1", targetX: 2.5, aimX: -0.5, aimDepth: 0, swipeX: -4, swipeY: 4, charging: true, speed: 1.6 });
     state.players.p1.charge = 1;
 
     hit(state, "p1");
@@ -82,10 +88,10 @@ describe("game logic shot reachability", () => {
   });
 
   it("lets receivers move forward to reach short cross-court balls near the net", () => {
-    const ball = { x: 3.35, y: 0.45, z: racketZ("p1") };
+    const ball = { x: -2, y: 0.45, z: racketZ("p1") };
     const shot = resolvePlayerShot(
       { side: "p1", ball, incomingVelocity: { x: 0, y: 0, z: incomingZ("p1") }, offset: 0, exchange: 1 },
-      { charge: 0, chargeHeldMs: 0, charging: false, swipeX: -8, swipeY: -4, aimX: -1, aimDepth: 0 },
+      { charge: 0, chargeHeldMs: 0, charging: false, swipeX: 0, swipeY: -4, aimX: -1, aimDepth: 0 },
       { intent: "smash", random: () => 0.5, swipeSideScale: 0.34 },
     );
 
@@ -95,7 +101,45 @@ describe("game logic shot reachability", () => {
     assert.ok(contact.contact!.z > -CONTACT.racketZ, `receiver should contact before baseline near net, got z=${contact.contact!.z}`);
   });
 
-  it("keeps every catchable focused player shot reachable by movement", () => {
+  it("keeps simple short net shots reachable instead of producing below-table bot hits", () => {
+    const cases = [
+      { label: "middle no force net", x: 0, aimX: 0, aimDepth: 0, charge: 0, swipeX: 0, swipeY: 0 },
+      { label: "all-right left net no force", x: TABLE.halfWidth + NET.paddleInset, aimX: -1, aimDepth: 0, charge: 0, swipeX: 0, swipeY: 0 },
+      { label: "all-right left net force", x: TABLE.halfWidth + NET.paddleInset, aimX: -1, aimDepth: 0, charge: 1, swipeX: 0, swipeY: 0 },
+      { label: "all-right left net side spin no force", x: TABLE.halfWidth + NET.paddleInset, aimX: -1, aimDepth: 0, charge: 0, swipeX: -8, swipeY: 0 },
+      { label: "all-right left net side spin force", x: TABLE.halfWidth + NET.paddleInset, aimX: -1, aimDepth: 0, charge: 1, swipeX: -8, swipeY: 0 },
+    ];
+
+    for (const input of cases) {
+      const state = createGame({ firstServer: "p1", nowMs: 0 });
+      state.phase = "exchange";
+      state.lastHitter = "p2";
+      state.exchange = 1;
+      state.players.p1.x = input.x;
+      state.players.p1.targetX = input.x;
+      state.players.p1.charge = input.charge;
+      submitInput(state, { side: "p1", targetX: input.x, aimX: input.aimX, aimDepth: input.aimDepth, swipeX: input.swipeX, swipeY: input.swipeY, charging: input.charge > 0, speed: 1 });
+      state.players.p1.charge = input.charge;
+
+      hit(state, "p1");
+      const contact = state.ballPlan?.contact;
+      assert.ok(contact, `${input.label}: should schedule receiver contact`);
+      assert.ok(contact!.y >= TABLE.ballRadius - 0.000001, `${input.label}: contact below table ${JSON.stringify(contact)}`);
+      assert.ok(Math.abs(contact!.x) <= maxReachableContactX() + 0.000001, `${input.label}: contact outside max reach ${JSON.stringify(contact)}`);
+
+      let returned = false;
+      while (state.phase === "exchange" && state.nowMs < 2200) {
+        submitInput(state, botInputForState(state, "p2", getBot("rookie")));
+        const { events } = advanceGame(state, 1 / 60);
+        returned ||= events.some((event) => event?.type === "shot" && event.side === "p2");
+        assert.ok(!events.some((event) => event?.type === "point" && event.reason === "OUT"), `${input.label}: simple reachable shot should not become bot OUT`);
+        if (returned) break;
+      }
+      assert.ok(returned, `${input.label}: rookie should return simple reachable shot`);
+    }
+  });
+
+  it("keeps focused player shots physically targeted under the tighter movement clamp", () => {
     const sides: Side[] = ["p1", "p2"];
     const startXs = [-3.35, 0, 3.35];
     const ballYs = [0.45, 0.9, 1.6, 2.4];
@@ -120,7 +164,7 @@ describe("game logic shot reachability", () => {
           checked += 1;
           if (!contact.catchableHeight) continue;
           catchable += 1;
-          assert.ok(contact.reachableX, `${side} ${intent} contact=${contact.contact?.x} max=${maxReachableContactX()} aim=${aimX} depth=${aimDepth} charge=${charge} swipe=(${swipeX},${swipeY})`);
+          assertTargeted(`${side} ${intent}`, side, ball, shot);
         }
       }
     }

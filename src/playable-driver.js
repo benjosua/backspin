@@ -4,7 +4,18 @@ import { damp } from './fx-state.js';
 import { syncCursorScreen as syncInputCursorScreen, setInputCallout } from './view-state.js';
 import { applyPointerVelocity, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
 import { initAudio } from './audio.js';
-import { assignDriverViewState } from './game-driver-view.js';
+import {
+  applyGameplayFx,
+  assignDriverViewState,
+  syncGameplayAimAndHud,
+  updateArenaVisuals,
+  updateBallVisuals,
+  updateGameplayCamera,
+  updateGameplayPaddles,
+  updateProjectionVisual,
+} from './game-driver-view.js';
+import { inputHud } from './view-state.js';
+import { useGameStore } from './store.js';
 import { NET } from '../shared/backspin-core.js';
 
 const clamp = MathUtils.clamp;
@@ -110,6 +121,91 @@ export class PlayableDriver {
       this.charging = false; 
       this.onChargeEnd();
     } 
+  }
+
+  sideColor(side) { return side === 'p1' ? COLORS.player : COLORS.ai; }
+
+  winnerIsLocal(side) { return side === 'p1'; }
+
+  processGameEvent(event, options = {}) {
+    if (!event) return;
+    if (event.type === 'bounce' || event.type === 'shot' || event.type === 'hit' || event.type === 'point' || event.type === 'net') {
+      applyGameplayFx(this, event, {
+        exchange: options.exchange ?? this.eventExchange ?? 0,
+        sideColor: options.sideColor || ((side) => this.sideColor(side)),
+        winnerIsLocal: options.winnerIsLocal || ((side) => this.winnerIsLocal(side)),
+        pointLabel: options.pointLabel ?? '',
+        playAudio: options.playAudio ?? true,
+      });
+    }
+  }
+
+  processGameEvents(events, options = {}) {
+    for (const event of events || []) this.processGameEvent(event, options);
+  }
+
+  syncPlayStore(state, { sideToStore = (side) => side, extra = {}, setter = 'setState' } = {}) {
+    const patch = {
+      scoreP: state.scoreP,
+      scoreAI: state.scoreAI,
+      phase: state.phase,
+      server: state.server,
+      winner: state.winner,
+      ...extra,
+    };
+    if (state.core) {
+      patch.scoreP = state.core.scores.p1;
+      patch.scoreAI = state.core.scores.p2;
+      patch.phase = state.core.phase === 'exchange' ? 'exchange' : state.core.phase;
+      patch.server = sideToStore(state.core.server);
+      patch.winner = state.core.winner ? sideToStore(state.core.winner) : null;
+    }
+    const store = useGameStore.getState();
+    if (setter === 'syncOnlineState') store.syncOnlineState(patch);
+    else useGameStore.setState(patch);
+  }
+
+  updateVisuals(dt, time, {
+    phase = 'exchange',
+    exchange = 0,
+    charge = inputHud.charge,
+    playerIncoming = false,
+    aiIncoming = false,
+    projection = {},
+    arena = {},
+    camera = true,
+  } = {}) {
+    updateGameplayPaddles(this, dt, { playerIncoming, aiIncoming });
+    updateBallVisuals(this, dt);
+    updateProjectionVisual(this, { phase, ...projection });
+    updateArenaVisuals(this, phase, exchange, charge, dt, time, arena);
+    if (camera) updateGameplayCamera(this, dt, time);
+  }
+
+  updateAimHud(options = {}) {
+    syncGameplayAimAndHud(this, options);
+  }
+
+  updateCommonVisuals(dt, time, store, localPhase, localExchange, localCharge, playerIncoming, aiIncoming, raiseOverScore) {
+    this.updateAimHud({
+      charge: localCharge,
+      charging: this.charging,
+      exchange: localExchange,
+      canInfluence: localPhase === 'exchange' || (localPhase === 'serve' && store.server === 'player'),
+    });
+    this.updateVisuals(dt, time, {
+      phase: localPhase,
+      exchange: localExchange,
+      charge: localCharge,
+      playerIncoming,
+      aiIncoming,
+      arena: { raiseOverScore },
+      projection: { incoming: playerIncoming },
+    });
+  }
+
+  updateCameraVisual(dt, time) {
+    updateGameplayCamera(this, dt, time);
   }
 
   updateInputState(dt, playerSpeed, camera) {

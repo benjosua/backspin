@@ -1,5 +1,5 @@
 export const TABLE = Object.freeze({ halfLength: 4.75, halfWidth: 2.85, netHeight: 0.5, ballRadius: 0.12, bounceRestitution: 0.82 });
-export const NET = Object.freeze({ tickMs: 1000 / 60, patchMs: 1000 / 60, inputSendMs: 1000 / 60, paddleFollow: 10, paddleSpeed: 19, paddleInset: 9 });
+export const NET = Object.freeze({ tickMs: 1000 / 60, patchMs: 1000 / 60, inputSendMs: 1000 / 60, paddleFollow: 10, paddleSpeed: 19, paddleInset: 0.9 });
 export const PHYSICS = Object.freeze({ gravity: 30, topspinGravity: 11, magnus: 7.5, speedScale: 1.9, curveScale: 1.7, playerHeight: 1.2 });
 export const CONTACT = Object.freeze({ reachX: 0.72, assistX: 0.08, minY: 0.05, maxY: 3.4, racketZ: 4.8, windowMs: 170 });
 export const POINT_RESET_DELAY_SECONDS = 0.8;
@@ -144,25 +144,49 @@ function timeAtY(startY, velocityY, spin, y) {
   const sqrt = Math.sqrt(disc);
   return [(-velocityY - sqrt) / ay, (-velocityY + sqrt) / ay].filter((t) => t >= 0).sort((a, b) => a - b);
 }
+function timeAtX(startX, velocityX, spin, x) {
+  const ax = accel(spin).x;
+  const c = startX - x;
+  if (Math.abs(ax) < 0.000001) {
+    if (Math.abs(velocityX) < 0.000001) return [];
+    const t = -c / velocityX;
+    return t >= 0 ? [t] : [];
+  }
+  const disc = velocityX * velocityX - 2 * ax * c;
+  if (disc < 0) return [];
+  const sqrt = Math.sqrt(disc);
+  return [(-velocityX - sqrt) / ax, (-velocityX + sqrt) / ax].filter((t) => t >= 0).sort((a, b) => a - b);
+}
+function playableContactHeight(p) {
+  return p.y >= TABLE.ballRadius - 0.000001 && p.y <= CONTACT.maxY + 0.000001;
+}
+function reachableContactPoint(p) {
+  return playableContactHeight(p) && Math.abs(p.x) <= maxReachableContactX() + 0.000001;
+}
 function movedReceiverContact(bounce, velocity, spin, receiver, maxT) {
   const receiverDir = receiver === 'p1' ? 1 : -1;
-  const candidates = [0, maxT, ...timeAtY(bounce.y, velocity.y, spin, CONTACT.minY), ...timeAtY(bounce.y, velocity.y, spin, CONTACT.maxY)]
-    .filter((t) => t >= 0 && t <= maxT)
+  const reach = maxReachableContactX();
+  const candidates = [0, maxT, ...timeAtY(bounce.y, velocity.y, spin, TABLE.ballRadius), ...timeAtY(bounce.y, velocity.y, spin, CONTACT.maxY), ...timeAtX(bounce.x, velocity.x, spin, -reach), ...timeAtX(bounce.x, velocity.x, spin, reach)]
+    .filter((t) => t >= 0 && t <= maxT + 0.000001)
     .map((t) => ({ t, p: sampleAt(bounce, velocity, spin, t) }))
-    .filter(({ p }) => Math.sign(p.z || receiverDir) === receiverDir && p.y >= CONTACT.minY - 0.000001 && p.y <= CONTACT.maxY + 0.000001)
+    .filter(({ p }) => Math.sign(p.z || receiverDir) === receiverDir && reachableContactPoint(p))
     .sort((a, b) => b.t - a.t);
   return candidates[0] ?? null;
 }
-function contactAfterBounce({ bounce, velocity, spin, hitter, startMs, bounceTime }) {
+function contactAfterBounce({ bounce, velocity, spin, hitter, startMs, bounceTime, maxContactT = null }) {
   const receiver = otherSide(hitter);
   const rz = receiver === 'p1' ? CONTACT.racketZ : -CONTACT.racketZ;
   const t = timeAtZ(bounce.z, velocity.z, rz);
   if (t == null) return null;
+  const limitT = maxContactT == null ? t : Math.min(t, maxContactT);
+  if (limitT < 0) return null;
   const fixed = sampleAt(bounce, velocity, spin, t);
-  const moved = movedReceiverContact(bounce, velocity, spin, receiver, t);
-  const contactT = fixed.y >= CONTACT.minY && fixed.y <= CONTACT.maxY ? t : moved?.t ?? t;
-  const p = contactT === t ? fixed : moved.p;
-  return { type: 'contact', atMs: startMs + (bounceTime + contactT) * 1000, side: receiver, x: p.x, y: p.y, z: p.z, catchableHeight: p.y >= CONTACT.minY - 0.000001 && p.y <= CONTACT.maxY + 0.000001 };
+  const moved = movedReceiverContact(bounce, velocity, spin, receiver, limitT);
+  const useFixed = t <= limitT + 0.000001 && reachableContactPoint(fixed);
+  const contactT = useFixed ? t : moved?.t;
+  if (contactT == null) return null;
+  const p = useFixed ? fixed : moved.p;
+  return { type: 'contact', atMs: startMs + (bounceTime + contactT) * 1000, side: receiver, x: p.x, y: p.y, z: p.z, catchableHeight: playableContactHeight(p) };
 }
 function firstBounce(start, velocity, spin, startMs) {
   const t = timeToGround(start.y, velocity.y, spin);
@@ -249,7 +273,9 @@ function makePlan({ kind, hitter, start, velocity, spin, startMs, target }) {
     return { id: 0, kind, hitter, startMs, start, velocity, spin, target, events, segments: [segment, { atMs: secondEvent.atMs, x: second.p.x, z: second.p.z, afterVelocity: bounced2.velocity, afterSpin: bounced2.spin }], contact };
   }
 
-  const contact = contactAfterBounce({ bounce: first.p, velocity: bounced.velocity, spin: bounced.spin, hitter, startMs, bounceTime: first.t });
+  const second = firstBounce(bounceStart, bounced.velocity, bounced.spin, first.event.atMs);
+  const maxContactT = second ? Math.max(0, second.t - 0.001) : null;
+  const contact = contactAfterBounce({ bounce: first.p, velocity: bounced.velocity, spin: bounced.spin, hitter, startMs, bounceTime: first.t, maxContactT });
   if (contact) events.push(contact);
   events.push({ type: 'point', atMs: (contact?.atMs ?? first.event.atMs + 850) + CONTACT.windowMs, winner: hitter, reason: 'WINNER' });
   return { id: 0, kind, hitter, startMs, start, velocity, spin, target, events, segments: [segment], contact };
@@ -260,10 +286,42 @@ export function solveShot(ball, targetX, targetZ, flightTime, topSpin = 0, sideS
 }
 export function solveReachableShot(ball, targetX, targetZ, flightTime, topSpin = 0, sideSpin = 0, shooterSide = 'p1') {
   const target = { x: clamp(targetX, -TABLE.halfWidth * 0.96, TABLE.halfWidth * 0.96), z: clamp(targetZ, -TABLE.halfLength * 0.98, TABLE.halfLength * 0.98) };
-  const spin = { top: clamp(topSpin, -0.9, 1), side: clamp(sideSpin, -0.85, 0.85) };
-  const velocity = solveShot(ball, target.x, target.z, clamp(flightTime, 0.38, 0.95), spin.top, spin.side);
-  const plan = makePlan({ kind: 'rally', hitter: shooterSide, start: ball, velocity, spin, startMs: 0, target });
-  return { velocity, targetX: target.x, topSpin: spin.top, sideSpin: spin.side, reachAdjusted: false, contact: plan.contact };
+  const requestedSpin = { top: clamp(topSpin, -0.9, 1), side: clamp(sideSpin, -0.85, 0.85) };
+  const requestedFlightTime = clamp(flightTime, 0.36, 1.08);
+  const zDir = sideDir(shooterSide);
+  const requestedDepth = clamp(Math.abs(target.z) / TABLE.halfLength, 0.12, 0.98);
+  const uniq = (values) => values.filter((value, index, array) => array.findIndex((other) => Math.abs(other - value) < 0.000001) === index);
+  const targetXPulls = [1, 0.9, 0.75, 0.6, 0.45, 0.25, 0];
+  const depthOptions = uniq([requestedDepth, Math.max(requestedDepth, 0.2), Math.max(requestedDepth, 0.32), 0.42, 0.55, 0.68, 0.82].map((n) => clamp(n, 0.12, 0.98)));
+  const flightOptions = uniq([requestedFlightTime, requestedFlightTime + 0.06, requestedFlightTime + 0.14, 0.55, 0.68, 0.82, 0.98, 1.08].map((n) => clamp(n, 0.36, 1.08)));
+  const sideSpinScales = [1, 0.75, 0.5, 0.25, 0];
+  const topSpinScales = [1, 0.7, 0.35, 0];
+
+  for (const xPull of targetXPulls) for (const depth of depthOptions) for (const t of flightOptions) for (const sideScale of sideSpinScales) for (const topScale of topSpinScales) {
+    const candidateTarget = {
+      x: clamp(target.x * xPull, -TABLE.halfWidth * 0.96, TABLE.halfWidth * 0.96),
+      z: zDir * TABLE.halfLength * depth,
+    };
+    const spin = {
+      top: clamp(requestedSpin.top * topScale, -0.9, 1),
+      side: clamp(requestedSpin.side * sideScale, -0.85, 0.85),
+    };
+    const velocity = solveShot(ball, candidateTarget.x, candidateTarget.z, t, spin.top, spin.side);
+    const plan = makePlan({ kind: 'rally', hitter: shooterSide, start: ball, velocity, spin, startMs: 0, target: candidateTarget });
+    const bounce = plan.events.find((e) => e.type === 'bounce');
+    const legalBounce = bounce && onTable(bounce) && bounce.side === otherSide(shooterSide);
+    const reachableContact = Boolean(plan.contact && plan.contact.catchableHeight && plan.contact.y >= TABLE.ballRadius - 0.000001 && Math.abs(plan.contact.x) <= maxReachableContactX() + 0.000001);
+    if (legalBounce && reachableContact) {
+      const adjusted = Math.abs(xPull - 1) > 0.000001 || Math.abs(depth - requestedDepth) > 0.000001 || Math.abs(t - requestedFlightTime) > 0.000001 || Math.abs(sideScale - 1) > 0.000001 || Math.abs(topScale - 1) > 0.000001;
+      return { velocity, targetX: candidateTarget.x, topSpin: spin.top, sideSpin: spin.side, reachAdjusted: adjusted, contact: plan.contact };
+    }
+  }
+
+  const spin = { top: 0, side: 0 };
+  const fallbackTarget = { x: 0, z: zDir * TABLE.halfLength * 0.55 };
+  const velocity = solveShot(ball, fallbackTarget.x, fallbackTarget.z, 0.82, 0, 0);
+  const plan = makePlan({ kind: 'rally', hitter: shooterSide, start: ball, velocity, spin, startMs: 0, target: fallbackTarget });
+  return { velocity, targetX: fallbackTarget.x, topSpin: spin.top, sideSpin: spin.side, reachAdjusted: true, contact: plan.contact };
 }
 export function solveLegalServe(ball, targetX, targetZ, flightTime, topSpin = 0, sideSpin = 0, shooterSide = 'p1') {
   const zDir = sideDir(shooterSide);
@@ -447,12 +505,12 @@ export function serve(state, side = state.server) {
   return { state, events: [event] };
 }
 
-export function hit(state, side) {
+export function hit(state, side, contactEvent = null) {
   side = sideIndex(side);
   if (state.phase !== 'exchange' || state.lastHitter === side) return { state, events: [] };
   const p = state.players[side];
-  const sample = sampleBallPlan(state.ballPlan, state.nowMs);
-  const ball = { x: sample.x, y: sample.y, z: sample.z };
+  const sample = sampleBallPlan(state.ballPlan, contactEvent?.atMs ?? state.nowMs);
+  const ball = contactEvent ? { x: contactEvent.x, y: contactEvent.y, z: contactEvent.z } : { x: sample.x, y: sample.y, z: sample.z };
   const charge = p.charge;
   const shot = resolvePlayerShot({ side, ball, incomingVelocity: { x: sample.vx, y: sample.vy, z: sample.vz }, offset: clamp((ball.x - p.x) / CONTACT.reachX, -1, 1), exchange: state.exchange + 1 }, { charge: p.charge, charging: p.charging, swipeX: p.swipeX, swipeY: p.swipeY, paddleVx: p.vx, aimX: p.aimX, aimDepth: p.aimDepth });
   const plan = makePlan({ kind: 'rally', hitter: side, start: ball, velocity: shot.velocity, spin: shot.spin, startMs: state.nowMs, target: shot.target });
@@ -517,7 +575,7 @@ export function advanceGame(state, dtSeconds) {
       const p = state.players[e.side];
       const miss = !e.catchableHeight || Math.abs(e.x - p.x) > CONTACT.reachX + CONTACT.assistX;
       if (miss) events.push(awardPoint(state, otherSide(e.side), e.catchableHeight ? 'WINNER' : 'MISS'));
-      else events.push(hit(state, e.side).events[0]);
+      else events.push(hit(state, e.side, e).events[0]);
       break;
     } else if (e.type === 'point') {
       events.push(awardPoint(state, e.winner, e.reason));

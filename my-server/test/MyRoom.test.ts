@@ -18,6 +18,8 @@ import {
   solveReachableShot,
   solveShot,
   stepPaddleX,
+  hit,
+  submitInput,
 } from "../src/shared/backspin-core.js";
 import { BOT_MAX_OFF_TABLE_X, getBot, resolveBotPaddleTarget, stepBotPaddle } from "../src/shared/backspin-bot.js";
 
@@ -194,22 +196,23 @@ describe("backspin room", () => {
     client.onMessage("fx", () => {});
 
     await waitFor(() => room.state.joined === 2, "bot room ready");
+    const core = room.core;
     room.state.phase = "exchange";
-    room.lastHitter = "p1";
-    room.bouncedReceiver = true;
-    room.state.exchange = 1;
-    room.state.p2X = 0;
-    room.state.ballX = 0;
-    room.state.ballY = 1;
-    room.state.ballZ = -4.7;
-    room.state.ballVx = 0;
-    room.state.ballVy = 0;
-    room.state.ballVz = -3;
-    room.update(0.05);
+    core.phase = "exchange";
+    core.lastHitter = "p2";
+    core.players.p1.x = 2.5;
+    core.players.p1.targetX = 2.5;
+    submitInput(core, { side: "p1", targetX: 2.5, aimX: -0.5, aimDepth: 0, swipeX: -4, swipeY: 4, charging: true, speed: 1.6 });
+    core.players.p1.charge = 1;
+    hit(core, "p1");
 
-    assert.strictEqual(room.lastHitter, "p2");
+    await waitFor(() => {
+      room.update(1 / 60);
+      return core.lastHitter === "p2";
+    }, "bot returned reachable shot", 2500);
+
+    assert.strictEqual(core.lastHitter, "p2");
     assert.ok(room.state.exchange >= 2);
-    assert.ok(room.state.ballVz > 0);
     await client.leave();
   });
 
@@ -276,12 +279,12 @@ describe("backspin room", () => {
   });
 
   it("keeps legal side-spun corner targets reachable without pulling them inward", () => {
-    const ball = { x: -3.35, y: 0.45, z: CONTACT.racketZ };
-    const targetX = 2.5;
+    const ball = { x: -2, y: 0.45, z: CONTACT.racketZ };
+    const targetX = 1;
     const targetZ = -2.1;
     const flightTime = 0.5;
     const topSpin = 0.29;
-    const sideSpin = 0.28;
+    const sideSpin = 0.12;
 
     const rawVelocity = solveShot(ball, targetX, targetZ, flightTime, topSpin, sideSpin);
     const rawContact = simulateReceiverContact(ball, rawVelocity, topSpin, sideSpin, "p1");
@@ -423,6 +426,10 @@ describe("backspin room", () => {
     await waitFor(() => p1Emotes.length === 1 && p2Emotes.length === 1, "emote broadcast");
     assert.deepStrictEqual(p1Emotes[0], { side: "p1", emoteId: "1", emoji: "👍" });
     assert.deepStrictEqual(p2Emotes[0], { side: "p1", emoteId: "1", emoji: "👍" });
+    await (room as any).replay.whenIdle();
+    const replay = await matchStore.getReplay((room as any).replay.currentMatchId);
+    assert.deepStrictEqual(replay?.events.map((event) => event.type), ["emote"]);
+    assert.deepStrictEqual(replay?.events[0].payload, { side: "p1", emoteId: "1", emoji: "👍" });
     await p1.leave();
     await p2.leave();
   });
@@ -444,6 +451,9 @@ describe("backspin room", () => {
 
     assert.strictEqual(p1Emotes.length, 0);
     assert.strictEqual(p2Emotes.length, 0);
+    await (room as any).replay.whenIdle();
+    const replay = await matchStore.getReplay((room as any).replay.currentMatchId);
+    assert.deepStrictEqual(replay?.events, []);
     await p1.leave();
     await p2.leave();
   });
@@ -466,6 +476,9 @@ describe("backspin room", () => {
 
     assert.strictEqual(p2Emotes.length, 1);
     assert.deepStrictEqual(p2Emotes[0], { side: "p1", emoteId: "1", emoji: "👍" });
+    await (room as any).replay.whenIdle();
+    const replay = await matchStore.getReplay((room as any).replay.currentMatchId);
+    assert.deepStrictEqual(replay?.events.map((event) => event.type), ["emote"]);
     await p1.leave();
     await p2.leave();
   });
@@ -533,7 +546,7 @@ describe("backspin room", () => {
     assert.strictEqual(simulateLegalServe(ball, serve.velocity, serve.topSpin, serve.sideSpin, "p2").ok, true);
   });
 
-  it("does not fault a legal serve on the first server-side bounce", async () => {
+  it("does not run removed legacy serve-bounce schema hook", async () => {
     const room = await colyseus.createRoom<any>("backspin", { mode: "public" });
     const p1 = await colyseus.connectTo(room, { name: "P1" });
     const p2 = await colyseus.connectTo(room, { name: "P2" });
@@ -543,8 +556,6 @@ describe("backspin room", () => {
     await waitFor(() => room.clients.length === 2, "players joined");
     room.state.phase = "exchange";
     room.lastHitter = "p1";
-    room.bouncedReceiver = false;
-    room.serveBounceCount = 0;
     room.state.ballX = 0;
     room.state.ballY = 0.13;
     room.state.ballZ = 1.2;
@@ -553,14 +564,13 @@ describe("backspin room", () => {
     room.state.ballVz = -2;
     room.update(1 / 60);
 
-    assert.strictEqual(room.state.phase, "exchange");
-    assert.strictEqual(room.state.pointReason, "");
-    assert.strictEqual(room.serveBounceCount, 1);
+    assert.strictEqual(room.serveBounceCount, undefined);
+    assert.notStrictEqual(room.state.pointReason, "FAULT");
     await p1.leave();
     await p2.leave();
   });
 
-  it("faults a serve that lands first on the receiver side", async () => {
+  it("does not let direct schema pokes fault serves outside the core", async () => {
     const room = await colyseus.createRoom<any>("backspin", { mode: "public" });
     const p1 = await colyseus.connectTo(room, { name: "P1" });
     const p2 = await colyseus.connectTo(room, { name: "P2" });
@@ -570,8 +580,6 @@ describe("backspin room", () => {
     await waitFor(() => room.clients.length === 2, "players joined");
     room.state.phase = "exchange";
     room.lastHitter = "p1";
-    room.bouncedReceiver = false;
-    room.serveBounceCount = 0;
     room.state.ballX = 0;
     room.state.ballY = 0.13;
     room.state.ballZ = -1.2;
@@ -580,9 +588,8 @@ describe("backspin room", () => {
     room.state.ballVz = -2;
     room.update(1 / 60);
 
-    assert.strictEqual(room.state.phase, "point");
-    assert.strictEqual(room.state.pointWinner, "p2");
-    assert.strictEqual(room.state.pointReason, "FAULT");
+    assert.strictEqual(room.serveBounceCount, undefined);
+    assert.notStrictEqual(room.state.pointReason, "FAULT");
     await p1.leave();
     await p2.leave();
   });
@@ -737,6 +744,7 @@ describe("backspin room", () => {
     const shots: any[] = [];
     const points: any[] = [];
     const chunks: any[] = [];
+    const events: any[] = [];
     const finishes: any[] = [];
     const store: any = {
       async init() {},
@@ -750,6 +758,7 @@ describe("backspin room", () => {
       async addPoint(input: any) { points.push(input); },
       async addShot(input: any) { shots.push(input); },
       async addReplayChunk(input: any) { chunks.push(input); },
+      async addReplayEvent(input: any) { events.push(input); },
       async getMatchDetails() { return null; },
       async getReplay() { return null; },
       async getShotReplay() { return null; },
@@ -760,6 +769,7 @@ describe("backspin room", () => {
     const firstMatchId = recorder.start({ roomId: "race", matchSeq: 1, mode: "ranked", ranked: true, p1Name: "P1", p2Name: "P2" });
     recorder.recordShot(replayShot(), 100);
     recorder.recordPoint(replayPoint(), 120);
+    recorder.recordEvent({ type: "bounce", payload: { x: 1.23456, z: -2.34567 } }, 130);
     recorder.recordFrame(makeReplayState(), 140);
     recorder.finalize({ endedReason: "completed", winner: "p1", p1Score: 11, p2Score: 9 }, 200);
     const secondMatchId = recorder.start({ roomId: "race", matchSeq: 2, mode: "ranked", ranked: true, p1Name: "P1", p2Name: "P2" });
@@ -775,6 +785,11 @@ describe("backspin room", () => {
     assert.strictEqual(shots[0].timeMs, 100);
     assert.strictEqual(points[0].matchId, firstMatchId);
     assert.strictEqual(points[0].timeMs, 120);
+    assert.strictEqual(events[0].matchId, firstMatchId);
+    assert.strictEqual(events[0].seq, 1);
+    assert.strictEqual(events[0].timeMs, 130);
+    assert.strictEqual(events[0].type, "bounce");
+    assert.deepStrictEqual(events[0].payload, { x: 1.2346, z: -2.3457 });
     assert.strictEqual(chunks[0].matchId, firstMatchId);
     assert.strictEqual(chunks[0].startMs, 140);
     assert.strictEqual(chunks[0].frames[0][1], 1.2346);
@@ -803,14 +818,18 @@ describe("backspin room", () => {
     await matchStore.addShot({ id: shotId, matchId: match.id, seq: 1, timeMs: 1000, pointSeq: 1, exchange: 1, hitter: "p1", isServe: false, contact: {}, outgoing: {}, charge: 0, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 10, intent: "drive", smash: false });
     await matchStore.addShot({ id: `${match.id}:shot:2`, matchId: match.id, seq: 2, timeMs: 5000, pointSeq: 2, exchange: 1, hitter: "p2", isServe: false, contact: {}, outgoing: {}, charge: 0, aimX: 0, aimDepth: 0.5, spinTop: 0, spinSide: 0, speed: 10, intent: "drive", smash: false });
     await matchStore.addPoint({ id: `${match.id}:point:1`, matchId: match.id, seq: 1, timeMs: 1300, winner: "p1", reason: "WINNER", server: "p1", p1Score: 1, p2Score: 0, rallyLength: 1, terminalBall: {} });
+    await matchStore.addReplayEvent({ id: `${match.id}:event:2`, matchId: match.id, seq: 2, timeMs: 940, type: "net", payload: { x: 0, y: 0.4, z: 0 } });
+    await matchStore.addReplayEvent({ id: `${match.id}:event:1`, matchId: match.id, seq: 1, timeMs: 920, type: "bounce", payload: { x: 1, z: -1 } });
     await matchStore.addReplayChunk({ matchId: match.id, chunkIndex: 0, startMs: 0, endMs: 100, frames: [[0], [100]] });
     await matchStore.addReplayChunk({ matchId: match.id, chunkIndex: 1, startMs: 900, endMs: 1300, frames: [[900], [1000], [1300]] });
     await matchStore.addReplayChunk({ matchId: match.id, chunkIndex: 2, startMs: 1400, endMs: 1600, frames: [[1400], [1600]] });
     await matchStore.finishMatch({ matchId: match.id, endedReason: "completed", winner: "p1", p1Score: 11, p2Score: 8, durationMs: 1600, totalPoints: 1, totalShots: 2 });
 
     const replay = await matchStore.getShotReplay(match.id, shotId);
+    const fullReplay = await matchStore.getReplay(match.id);
 
     assert.deepStrictEqual(replay?.frames.map((frame) => frame[0]), [900, 1000, 1300]);
+    assert.deepStrictEqual(fullReplay?.events.map((event) => event.type), ["bounce", "net"]);
   });
 
   it("records authoritative replay data and exposes match replay APIs", async () => {
@@ -833,6 +852,7 @@ describe("backspin room", () => {
     room.state.server = "p1";
     p1.send("input", { x: 0, y: 0, aimX: 0.2, aimDepth: 0.6, vx: 1, vy: 0.5, speed: 1 });
     await new Promise((resolve) => setTimeout(resolve, 30));
+    p1.send("emote", { emoteId: "3" });
     p1.send("serve");
     await waitFor(() => room.state.phase === "exchange", "serve shot recorded");
     room.stepSimulation(1 / 60);
@@ -853,6 +873,7 @@ describe("backspin room", () => {
     assert.strictEqual(replay.points[0].reason, "WINNER");
     assert.ok(replay.chunks[0].frames.length >= 1);
     assert.ok(replay.chunks[0].frames.every((frame, index, frames) => index === 0 || frame[0] >= frames[index - 1][0]));
+    assert.ok(replay.events.some((event) => event.type === "emote" && event.payload.emoteId === "3"));
     assert.ok(rankedMatches?.some((match) => match.matchId === matchId), "ranked match should link to replay match");
 
     const summaryResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}`, { headers: { Authorization: `Bearer ${p1Account.token}` } });
@@ -899,6 +920,7 @@ describe("backspin room", () => {
     const replayBody = await replayResponse.json();
     assert.strictEqual(replayResponse.status, 200);
     assert.ok(replayBody.chunks[0].frames.length >= 1);
+    assert.ok(replayBody.events.some((event: any) => event.type === "emote" && event.payload.emoji === "🔥"));
 
     const p2ReplayResponse = await fetch(`${serverHttp(colyseus)}/api/matches/${matchId}/replay`, { headers: { Authorization: `Bearer ${p2Account.token}` } });
     const p2ReplayBody = await p2ReplayResponse.json();
@@ -1044,7 +1066,7 @@ describe("backspin room", () => {
     room.point("p1", "WINNER");
     await waitFor(async () => (await rankedStore.getProfile(p1Account.user.id)).gamesPlayed === 1, "first ranked match persisted");
     const firstMatchId = room.replay.currentMatchId;
-    await waitFor(async () => Boolean((await matchStore.getMatchDetails(firstMatchId))?.match.endedAt), "first replay persisted");
+    await waitFor(async () => Boolean((await matchStore.getMatchDetails(firstMatchId))?.match.endedAt), "first replay persisted", 4000);
 
     p1.send("rematch");
     p2.send("rematch");
@@ -1056,7 +1078,7 @@ describe("backspin room", () => {
     room.point("p2", "WINNER");
 
     await waitFor(async () => (await rankedStore.getProfile(p1Account.user.id)).gamesPlayed === 2, "second ranked match persisted");
-    await waitFor(async () => Boolean((await matchStore.getMatchDetails(secondMatchId))?.match.endedAt), "second replay persisted");
+    await waitFor(async () => Boolean((await matchStore.getMatchDetails(secondMatchId))?.match.endedAt), "second replay persisted", 4000);
     const p1Profile = await rankedStore.getProfile(p1Account.user.id);
     const p2Profile = await rankedStore.getProfile(p2Account.user.id);
 

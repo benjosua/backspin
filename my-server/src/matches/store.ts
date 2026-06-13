@@ -40,6 +40,15 @@ export type ReplayChunkInput = {
   frames: ReplayFrame[];
 };
 
+export type ReplayEventInput = {
+  id: string;
+  matchId: string;
+  seq: number;
+  timeMs: number;
+  type: string;
+  payload: Record<string, unknown>;
+};
+
 export type ShotInput = {
   id: string;
   matchId: string;
@@ -146,6 +155,7 @@ export type UserStats = {
 
 export type MatchReplay = MatchDetails & {
   chunks: ReplayChunkInput[];
+  events: ReplayEventInput[];
 };
 
 export type ShotReplay = {
@@ -161,6 +171,7 @@ export interface MatchStore {
   addPoint(input: PointInput): Promise<void>;
   addShot(input: ShotInput): Promise<void>;
   addReplayChunk(input: ReplayChunkInput): Promise<void>;
+  addReplayEvent(input: ReplayEventInput): Promise<void>;
   getMatchDetails(matchId: string): Promise<MatchDetails | null>;
   getReplay(matchId: string): Promise<MatchReplay | null>;
   getShotReplay(matchId: string, shotId: string): Promise<ShotReplay | null>;
@@ -233,6 +244,17 @@ function makeShot(row: any): MatchShot {
     speed: Number(row.speed || 0),
     intent: row.intent ?? null,
     smash: Boolean(row.smash),
+  };
+}
+
+function makeReplayEvent(row: any): ReplayEventInput {
+  return {
+    id: row.id,
+    matchId: row.match_id,
+    seq: Number(row.seq),
+    timeMs: Number(row.time_ms),
+    type: row.type,
+    payload: row.payload || {},
   };
 }
 
@@ -406,6 +428,17 @@ class PostgresMatchStore implements MatchStore {
         PRIMARY KEY (match_id, chunk_index)
       );
       CREATE INDEX IF NOT EXISTS match_replay_chunks_time_idx ON match_replay_chunks(match_id, start_ms, end_ms);
+
+      CREATE TABLE IF NOT EXISTS match_replay_events (
+        id text PRIMARY KEY,
+        match_id text NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+        seq integer NOT NULL,
+        time_ms integer NOT NULL,
+        type text NOT NULL,
+        payload jsonb NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS match_replay_events_match_idx ON match_replay_events(match_id, seq);
+      CREATE INDEX IF NOT EXISTS match_replay_events_time_idx ON match_replay_events(match_id, time_ms);
     `);
   }
 
@@ -463,6 +496,16 @@ class PostgresMatchStore implements MatchStore {
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (match_id, chunk_index) DO NOTHING`,
       [input.matchId, input.chunkIndex, input.startMs, input.endMs, input.frames.length, data],
+    );
+  }
+
+  async addReplayEvent(input: ReplayEventInput) {
+    await this.init();
+    await this.pool.query(
+      `INSERT INTO match_replay_events (id, match_id, seq, time_ms, type, payload)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (id) DO NOTHING`,
+      [input.id, input.matchId, input.seq, roundInt(input.timeMs), input.type, input.payload || {}],
     );
   }
 
@@ -528,8 +571,11 @@ class PostgresMatchStore implements MatchStore {
   async getReplay(matchId: string) {
     const details = await this.getMatchDetails(matchId);
     if (!details) return null;
-    const chunksResult = await this.pool.query("SELECT * FROM match_replay_chunks WHERE match_id = $1 ORDER BY chunk_index", [matchId]);
-    return { ...details, chunks: await this.decodeReplayChunks(chunksResult.rows) };
+    const [chunksResult, eventsResult] = await Promise.all([
+      this.pool.query("SELECT * FROM match_replay_chunks WHERE match_id = $1 ORDER BY chunk_index", [matchId]),
+      this.pool.query("SELECT * FROM match_replay_events WHERE match_id = $1 ORDER BY seq", [matchId]),
+    ]);
+    return { ...details, chunks: await this.decodeReplayChunks(chunksResult.rows), events: eventsResult.rows.map(makeReplayEvent) };
   }
 
   async getShotReplay(matchId: string, shotId: string) {
@@ -659,6 +705,7 @@ class MemoryMatchStore implements MatchStore {
   private points = new Map<string, MatchPoint[]>();
   private shots = new Map<string, MatchShot[]>();
   private chunks = new Map<string, ReplayChunkInput[]>();
+  private events = new Map<string, ReplayEventInput[]>();
 
   async init() {}
 
@@ -667,6 +714,7 @@ class MemoryMatchStore implements MatchStore {
     this.points.clear();
     this.shots.clear();
     this.chunks.clear();
+    this.events.clear();
   }
 
   async createMatch(input: MatchCreateInput) {
@@ -695,6 +743,7 @@ class MemoryMatchStore implements MatchStore {
     this.points.set(id, []);
     this.shots.set(id, []);
     this.chunks.set(id, []);
+    this.events.set(id, []);
     return match;
   }
 
@@ -741,6 +790,15 @@ class MemoryMatchStore implements MatchStore {
     this.chunks.set(input.matchId, rows);
   }
 
+  async addReplayEvent(input: ReplayEventInput) {
+    const rows = this.events.get(input.matchId) || [];
+    if (!rows.some((row) => row.id === input.id)) {
+      rows.push({ ...input, payload: { ...(input.payload || {}) } });
+      if (rows.length > 1 && rows[rows.length - 2].seq > input.seq) rows.sort((a, b) => a.seq - b.seq);
+    }
+    this.events.set(input.matchId, rows);
+  }
+
   async getMatchDetails(matchId: string) {
     const match = this.matches.get(matchId);
     if (!match) return null;
@@ -752,7 +810,7 @@ class MemoryMatchStore implements MatchStore {
   async getReplay(matchId: string) {
     const details = await this.getMatchDetails(matchId);
     if (!details) return null;
-    return { ...details, chunks: [...(this.chunks.get(matchId) || [])] };
+    return { ...details, chunks: [...(this.chunks.get(matchId) || [])], events: [...(this.events.get(matchId) || [])] };
   }
 
   async getShotReplay(matchId: string, shotId: string) {

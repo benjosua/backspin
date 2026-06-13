@@ -22,6 +22,8 @@ export class BackspinState extends Schema {
   @type("number") ballVz = 0;
   @type("number") spinTop = 0;
   @type("number") spinSide = 0;
+  @type("string") ballPlanJSON = "";
+  @type("string") lastHitter = "";
   @type("number") p1X = 0;
   @type("number") p2X = 0;
   @type("number") p1Charge = 0;

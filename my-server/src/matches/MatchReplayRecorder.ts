@@ -44,6 +44,11 @@ type PointRecordInput = {
   terminalBall: Record<string, unknown>;
 };
 
+type ReplayEventRecordInput = {
+  type: string;
+  payload?: Record<string, unknown>;
+};
+
 type FinishInput = {
   endedReason: string;
   winner?: Side | "" | null;
@@ -54,6 +59,7 @@ type FinishInput = {
 const n = (value: number) => Math.round((Number(value) || 0) * 10000) / 10000;
 const wallElapsedMs = (startedAt: number) => Math.max(0, Math.round(Date.now() - startedAt));
 const replayMs = (value: number) => Math.max(0, Math.round(Number(value) || 0));
+const replayPayload = (payload: Record<string, unknown> = {}) => Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, typeof value === "number" ? n(value) : value]));
 
 export class MatchReplayRecorder {
   private store: MatchStore;
@@ -64,6 +70,7 @@ export class MatchReplayRecorder {
   private frameChunk: ReplayFrame[] = [];
   private shotSeq = 0;
   private pointSeq = 0;
+  private eventSeq = 0;
   private finalized = false;
 
   constructor(store = matchStore) {
@@ -86,6 +93,7 @@ export class MatchReplayRecorder {
     this.frameChunk = [];
     this.shotSeq = 0;
     this.pointSeq = 0;
+    this.eventSeq = 0;
     this.finalized = false;
     const matchId = this.matchId;
     const startedAt = this.startedAt;
@@ -134,6 +142,18 @@ export class MatchReplayRecorder {
     const id = `${matchId}:point:${seq}`;
     const point = { ...input, id, matchId, timeMs };
     this.enqueue(() => this.store.addPoint(point));
+    return id;
+  }
+
+  recordEvent(input: ReplayEventRecordInput, timeMsInput = 0) {
+    if (!this.active || !this.matchId) return null;
+    this.eventSeq += 1;
+    const matchId = this.matchId;
+    const seq = this.eventSeq;
+    const timeMs = replayMs(timeMsInput);
+    const id = `${matchId}:event:${seq}`;
+    const event = { id, matchId, seq, timeMs, type: String(input.type || "event"), payload: replayPayload(input.payload || {}) };
+    this.enqueue(() => this.store.addReplayEvent(event));
     return id;
   }
 

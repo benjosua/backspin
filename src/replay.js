@@ -1,9 +1,9 @@
 import { MathUtils, Vector3 } from 'three';
-import { CAMERA } from './constants.js';
+import { CAMERA, COLORS } from './constants.js';
 import { clampDt, damp, resetFx } from './fx-state.js';
 import { inputHud, resetInputHud } from './view-state.js';
 import { useGameStore } from './store.js';
-import { assignDriverViewState, clearAimAndProjection, updateArenaVisuals, updateBallVisuals, updateReplayPaddles } from './game-driver-view.js';
+import { applyGameplayFx, assignDriverViewState, clearAimAndProjection, updateArenaVisuals, updateBallVisuals, updateReplayPaddles } from './game-driver-view.js';
 
 const replayDevBackendUrl = (import.meta.env.DEV && typeof window !== 'undefined')
   ? `${window.location.protocol}//${window.location.hostname}:2567`
@@ -58,6 +58,32 @@ function blendFrames(a, b, timeMs) {
   return decodeFrame(out);
 }
 
+function replayEventTime(event) {
+  return Math.max(0, Math.round(Number(event?.timeMs) || 0));
+}
+
+function replayEventId(event, index) {
+  return event?.id || `${event?.type || 'event'}:${event?.seq ?? index}:${replayEventTime(event)}`;
+}
+
+function buildReplayEvents(replay) {
+  const events = (replay?.events || []).map((event, index) => ({ ...event, replayKey: replayEventId(event, index) }));
+  const shots = (replay?.shots || []).map((shot, index) => ({ ...shot, type: 'shot', replayKey: replayEventId(shot, index) }));
+  const points = (replay?.points || []).map((point, index) => ({ ...point, type: 'point', replayKey: replayEventId(point, index) }));
+  return [...events, ...shots, ...points].sort((a, b) => replayEventTime(a) - replayEventTime(b) || (a.seq || 0) - (b.seq || 0) || (a.type === 'shot' ? -1 : 1));
+}
+
+function upperBoundReplayEvents(events, timeMs) {
+  let lo = 0;
+  let hi = events.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (replayEventTime(events[mid]) <= timeMs) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 export class ServerReplayPlayer {
   constructor(replay) {
     this.replay = replay;
@@ -65,6 +91,8 @@ export class ServerReplayPlayer {
     this.points = replay?.points || [];
     this.shots = replay?.shots || [];
     this.durationMs = this.frames.at(-1)?.[0] || replay?.match?.durationMs || 0;
+    this.events = buildReplayEvents(replay);
+    this.eventCursor = 0;
     this.cursorMs = 0;
     this.current = this.frames[0] ? decodeFrame(this.frames[0]) : null;
   }
@@ -78,9 +106,10 @@ export class ServerReplayPlayer {
     return new ServerReplayPlayer({ match: replay.match, shots: [replay.shot], points: [], chunks: [{ frames: replay.frames }] });
   }
 
-  seek(timeMs) {
+  seek(timeMs, { resetEvents = true } = {}) {
     if (!this.frames.length) return null;
     this.cursorMs = Math.max(0, Math.min(this.durationMs, Number(timeMs) || 0));
+    if (resetEvents) this.eventCursor = upperBoundReplayEvents(this.events, this.cursorMs);
     let lo = 0;
     let hi = this.frames.length - 1;
     while (lo < hi) {
@@ -90,6 +119,16 @@ export class ServerReplayPlayer {
     }
     this.current = blendFrames(this.frames[lo], this.frames[Math.min(lo + 1, this.frames.length - 1)], this.cursorMs);
     return this.current;
+  }
+
+  consumeEventsUntil(timeMs) {
+    const out = [];
+    const until = Math.max(0, Math.round(Number(timeMs) || 0));
+    while (this.eventCursor < this.events.length && replayEventTime(this.events[this.eventCursor]) <= until) {
+      out.push(this.events[this.eventCursor]);
+      this.eventCursor += 1;
+    }
+    return out;
   }
 
   jumpToPoint(seq) {
@@ -133,6 +172,7 @@ class ReplayGame {
     this.playerRef = null;
     this.viewerSide = 'p1';
     this.lastReplayTimeUiAt = 0;
+    this.fx = null;
   }
 
   resetCamera() {
@@ -256,6 +296,76 @@ class ReplayGame {
   }
   onKeyUp() {}
 
+  sideColor(side) {
+    return side === this.viewerSide ? COLORS.player : COLORS.ai;
+  }
+
+  winnerIsLocal(side) {
+    return side === this.viewerSide;
+  }
+
+  mapReplaySide(side) {
+    return side === this.viewerSide ? 'player' : 'ai';
+  }
+
+  mapReplayPoint(point) {
+    const flip = this.viewerSide === 'p2' ? -1 : 1;
+    if (!point || typeof point !== 'object') return null;
+    return {
+      x: (Number(point.x) || 0) * flip,
+      y: Number(point.y) || 0,
+      z: (Number(point.z) || 0) * flip,
+    };
+  }
+
+  applyReplayEvent(event) {
+    if (!event) return;
+    if (event.type === 'bounce') {
+      const payload = event.payload || {};
+      const point = this.mapReplayPoint({ x: payload.x, y: 0, z: payload.z });
+      applyGameplayFx(this, { type: 'bounce', x: point?.x || 0, z: point?.z || 0 }, { playAudio: true });
+      return;
+    }
+    if (event.type === 'net') {
+      applyGameplayFx(this, { type: 'net' }, { playAudio: true });
+      return;
+    }
+    if (event.type === 'emote') {
+      const payload = event.payload || {};
+      const side = this.mapReplaySide(payload.side);
+      const emoji = payload.emoji;
+      if (emoji) useGameStore.getState().showEmote(side, emoji);
+      return;
+    }
+    if (event.type === 'shot') {
+      const side = this.mapReplaySide(event.hitter);
+      const racket = side === 'player' ? this.player : this.ai;
+      const contact = this.mapReplayPoint(event.contact);
+      racket.swing = Math.max(racket.swing || 0, event.smash ? 1 : 0.72);
+      racket.flash = Math.max(racket.flash || 0, event.smash ? 1 : 0.72);
+      if (contact) racket.y = clamp(contact.y, 0.42, racket.who === 'player' ? 2.6 : 1.8);
+      applyGameplayFx(this, { type: 'shot', side: event.hitter, smash: event.smash }, {
+        exchange: event.exchange || 0,
+        sideColor: (shotSide) => this.sideColor(shotSide),
+        winnerIsLocal: (winner) => this.winnerIsLocal(winner),
+        pointLabel: '',
+        playAudio: true,
+      });
+      return;
+    }
+    if (event.type === 'point') {
+      const terminal = this.mapReplayPoint(event.terminalBall);
+      if (terminal) this.ball.set(terminal.x, terminal.y, terminal.z);
+      applyGameplayFx(this, { type: 'point', winner: event.winner }, {
+        exchange: event.rallyLength || inputHud.exchange || 0,
+        sideColor: (side) => this.sideColor(side),
+        winnerIsLocal: (winner) => this.winnerIsLocal(winner),
+        pointLabel: event.reason || 'POINT',
+        playAudio: true,
+      });
+    }
+  }
+
   applyFrame(frame) {
     if (!frame) return;
     const flip = this.viewerSide === 'p2' ? -1 : 1;
@@ -294,20 +404,26 @@ class ReplayGame {
     });
   }
 
-  update(dt, time) {
+  update(dt, time, _camera, effects) {
+    this.fx = effects;
     dt = clampDt(dt);
     const store = useGameStore.getState();
     if (store.mode !== 'replay' || !this.playerRef) return;
     if (store.replayPlaying) {
       const next = this.playerRef.cursorMs + dt * 1000 * store.replaySpeed;
       const reachedEnd = next >= this.playerRef.durationMs;
-      this.seek(next, false);
+      const frame = this.playerRef.seek(next, { resetEvents: false });
+      if (frame) this.applyFrame(frame);
+      for (const event of this.playerRef.consumeEventsUntil(this.playerRef.cursorMs)) this.applyReplayEvent(event);
       this.syncReplayTime(reachedEnd);
       if (reachedEnd) useGameStore.getState().setReplayPlaying(false);
     }
-    updateReplayPaddles(this, dt);
+    const phase = useGameStore.getState().phase;
+    const playerIncoming = phase === 'exchange' && this.vel.z > 0;
+    const aiIncoming = phase === 'exchange' && this.vel.z < 0;
+    updateReplayPaddles(this, dt, { playerIncoming, aiIncoming });
     updateBallVisuals(this, dt);
-    updateArenaVisuals(this, store.phase, inputHud.exchange || 0, 0, dt, time, { replay: true });
+    updateArenaVisuals(this, phase, inputHud.exchange || 0, 0, dt, time, { replay: true });
     const cosPitch = Math.cos(this.cameraPitch);
     const targetX = this.cameraTarget.x + Math.sin(this.cameraYaw) * cosPitch * this.cameraDistance;
     const targetY = this.cameraTarget.y + Math.sin(this.cameraPitch) * this.cameraDistance;

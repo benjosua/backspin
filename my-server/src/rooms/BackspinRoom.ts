@@ -185,6 +185,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const last = this.emoteSentAt.get(client.sessionId) || 0;
     if (now - last < EMOTE_COOLDOWN_MS) return;
     this.emoteSentAt.set(client.sessionId, now);
+    this.replay.recordEvent({ type: "emote", payload: { side, emoteId, emoji } }, this.replayElapsedMs);
     this.broadcast("emote", { side, emoteId, emoji });
   }
   private handleRematch(client: Client) {
@@ -223,6 +224,16 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     const matchId = this.replay.start({ roomId: this.roomId, matchSeq: this.matchSeq, mode: this.state.mode, ranked: this.state.ranked, p1UserId: this.rankedUsers.get("p1") || null, p2UserId: this.rankedUsers.get("p2") || null, p1Name: this.state.p1Name, p2Name: this.state.p2Name });
     this.state.matchId = matchId;
   }
+
+  private scheduleFinalizeReplay(endedReason: string) {
+    const replay = this.replay;
+    const final = { endedReason, winner: this.state.winner as Side | "", p1Score: this.state.scoreP1, p2Score: this.state.scoreP2 };
+    this.clock.setTimeout(() => {
+      if (!replay.active) return;
+      void replay.finalize(final, this.replayElapsedMs);
+    }, 2500);
+  }
+
   private finalizeReplay(endedReason: string) { void this.replay.finalize({ endedReason, winner: this.state.winner as Side | "", p1Score: this.state.scoreP1, p2Score: this.state.scoreP2 }, this.replayElapsedMs); }
 
   private serve(side: Side) {
@@ -254,39 +265,8 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     }
   }
 
-  private handleLegacyDirectStateTest(): boolean {
-    const legacy: any = this as any;
-    if (this.state.phase !== "exchange" || !legacy.lastHitter) return false;
-    const lastHitter = legacy.lastHitter as Side;
-    if (this.state.ballVy < 0 && this.state.ballY <= TABLE.ballRadius + 0.02) {
-      const side = this.state.ballZ >= 0 ? "p1" : "p2";
-      if ((this.state.exchange || 0) === 0) {
-        const nextCount = (legacy.serveBounceCount || 0) + 1;
-        legacy.serveBounceCount = nextCount;
-        if (nextCount === 1 && side !== lastHitter) { this.point(sideOther(lastHitter), "FAULT"); return true; }
-        if (nextCount === 2 && side === lastHitter) { this.point(sideOther(lastHitter), "FAULT"); return true; }
-        if (nextCount === 2) legacy.bouncedReceiver = true;
-        this.state.ballY = TABLE.ballRadius;
-        this.state.ballVy = Math.abs(this.state.ballVy) * 0.5;
-        return true;
-      }
-    }
-    if (legacy.bouncedReceiver && lastHitter === "p1" && this.state.ballZ <= -4.65 && Math.abs(this.state.ballX - this.state.p2X) <= CONTACT.reachX + CONTACT.assistX) {
-      legacy.lastHitter = "p2";
-      this.core.lastHitter = "p2";
-      this.core.exchange = Math.max(this.core.exchange, (this.state.exchange || 1) + 1);
-      this.state.exchange = this.core.exchange;
-      this.state.ballVz = Math.abs(this.state.ballVz || 3);
-      this.state.spinSide = this.state.spinSide || -0.05;
-      this.broadcast("fx", { type: "hit", side: "p2" }, { afterNextPatch: true });
-      return true;
-    }
-    return false;
-  }
-
   update(dt: number) {
     this.ensureReplayStarted();
-    if (this.handleLegacyDirectStateTest()) return;
     // Test/dev compatibility: allow direct schema pokes to steer the new core.
     if ((this.state.phase === "serve" || this.state.phase === "exchange") && (this.core.phase !== this.state.phase || this.core.server !== this.state.server)) {
       this.core.phase = this.state.phase as any;
@@ -301,7 +281,14 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
   private handleCoreEvents(events: any[]) {
     for (const event of events) {
       if (!event) continue;
-      if (event.type === "bounce") this.broadcast("fx", { type: "bounce", x: event.x, z: event.z }, { afterNextPatch: true });
+      if (event.type === "bounce") {
+        this.replay.recordEvent({ type: "bounce", payload: { x: event.x, z: event.z } }, this.replayElapsedMs);
+        this.broadcast("fx", { type: "bounce", x: event.x, z: event.z }, { afterNextPatch: true });
+      }
+      if (event.type === "net") {
+        this.replay.recordEvent({ type: "net", payload: { x: event.x, y: event.y, z: event.z } }, this.replayElapsedMs);
+        this.broadcast("fx", { type: "net", x: event.x, y: event.y, z: event.z }, { afterNextPatch: true });
+      }
       if (event.type === "shot") {
         this.broadcast("fx", { type: "hit", side: event.side, smash: event.smash, intent: event.intent }, { afterNextPatch: true });
         if (!event.serve) {
@@ -327,14 +314,28 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
         if (this.botEnabled) updateBrain(this.botBrain, event.winner === "p2", pointQuality(event.reason, this.core.exchange));
         this.replay.recordPoint({ seq: event.pointSeq, winner: event.winner, reason: event.reason, server: this.core.server as Side, p1Score: event.scoreP1, p2Score: event.scoreP2, rallyLength: this.core.exchange, terminalBall: this.currentBallRecord() }, this.replayElapsedMs);
         this.broadcast("fx", { type: "point", winner: event.winner, reason: event.reason }, { afterNextPatch: true });
-        if (event.over) { this.finishRankedMatch("completed"); this.finalizeReplay("completed"); }
+        if (event.over) { this.finishRankedMatch("completed"); this.scheduleFinalizeReplay("completed"); }
       }
     }
   }
 
+
+  private syncBallPlanSchema() {
+    const plan: any = this.core.ballPlan;
+    this.state.lastHitter = this.core.lastHitter || "";
+    if (!plan || (this.core.phase !== "exchange" && this.core.phase !== "point")) {
+      this.state.ballPlanJSON = "";
+      return;
+    }
+    this.state.ballPlanJSON = JSON.stringify({
+      ...plan,
+      elapsedMs: Math.max(0, this.core.nowMs - (Number(plan.startMs) || 0)),
+    });
+  }
+
   private currentBallRecord() {
     const s = this.core.phase === "serve" ? { x: this.core.players[this.core.server as Side]?.x || 0, y: 0.96, z: this.core.server === "p1" ? CONTACT.racketZ - 0.45 : -CONTACT.racketZ + 0.45, vx: 0, vy: 0, vz: 0, spinTop: 0, spinSide: 0 } : sampleBallPlan(this.core.ballPlan, this.core.nowMs);
-    return { x: s.x, y: s.y, z: s.z, vx: s.vx || 0, vy: s.vy || 0, vz: s.vz || 0 };
+    return { x: s.x, y: s.y, z: s.z, vx: s.vx || 0, vy: s.vy || 0, vz: s.vz || 0, spinTop: (s as any).spinTop || 0, spinSide: (s as any).spinSide || 0 };
   }
 
   private syncSchema() {
@@ -352,6 +353,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.state.ballX = ball.x; this.state.ballY = ball.y; this.state.ballZ = ball.z;
     this.state.ballVx = ball.vx || 0; this.state.ballVy = ball.vy || 0; this.state.ballVz = ball.vz || 0;
     this.state.spinTop = ball.spinTop || 0; this.state.spinSide = ball.spinSide || 0;
+    this.syncBallPlanSchema();
     this.state.exchange = this.core.exchange;
     this.state.pointSeq = this.core.pointSeq;
     this.state.pointWinner = this.core.pointWinner;
@@ -380,7 +382,7 @@ export class BackspinRoom extends Room<{ state: BackspinState }> {
     this.syncSchema();
     this.replay.recordPoint({ seq: this.core.pointSeq, winner, reason, server: this.core.server as Side, p1Score: this.state.scoreP1, p2Score: this.state.scoreP2, rallyLength: this.core.exchange, terminalBall: this.currentBallRecord() }, this.replayElapsedMs);
     this.broadcast("fx", { type: "point", winner, reason }, { afterNextPatch: true });
-    if (over) { this.finishRankedMatch("completed"); void this.replay.finalize({ endedReason: "completed", winner, p1Score: this.state.scoreP1, p2Score: this.state.scoreP2 }, this.replayElapsedMs); }
+    if (over) { this.finishRankedMatch("completed"); this.scheduleFinalizeReplay("completed"); }
   }
 
   private finishRankedMatch(endedReason: string) {

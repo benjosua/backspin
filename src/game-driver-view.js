@@ -106,18 +106,17 @@ export function syncAimVisual(driver, canInfluence = true) {
 
 export function updatePaddlePose(racket, { dt, incoming = false, ballY = 0.62, replay = false } = {}) {
   const sign = racket.who === 'player' ? 1 : -1;
+  const maxY = racket.who === 'player' ? 2.6 : 1.8;
+  racket.swing = Math.max(0, racket.swing - dt * 4.5);
+  racket.flash = Math.max(0, racket.flash - dt * 4);
   if (replay) {
-    racket.y = damp(racket.y, 0.62 + (racket.tell || 0) * 0.25, 8, dt);
-    racket.z = racket.baseZ;
-    racket.flash = Math.max(0, racket.flash - dt * 4);
-    racket.rotX = (racket.who === 'player' ? -0.22 : 0.22) + (racket.tell || 0) * sign * 0.18;
+    racket.y = damp(racket.y, incoming ? clamp(ballY, 0.42, maxY) : 0.62, 8, dt);
+    racket.z = racket.baseZ - sign * racket.swing * 0.45;
+    racket.rotX = (racket.who === 'player' ? -0.22 : 0.22) - sign * racket.swing * 0.6;
     racket.rotZ = damp(racket.rotZ, clamp(-racket.vx * 0.12, -0.45, 0.45), 10, dt);
     return;
   }
-  const maxY = racket.who === 'player' ? 2.6 : 1.8;
   racket.y = damp(racket.y, incoming ? clamp(ballY, 0.42, maxY) : 0.62, 8, dt);
-  racket.swing = Math.max(0, racket.swing - dt * 4.5);
-  racket.flash = Math.max(0, racket.flash - dt * 4);
   racket.z = racket.baseZ - sign * racket.swing * 0.45;
   racket.rotX = (racket.who === 'player' ? -0.22 : 0.22) - sign * racket.swing * 0.6;
   racket.rotZ = damp(racket.rotZ, -racket.vx * 0.018, 12, dt);
@@ -128,9 +127,9 @@ export function updateGameplayPaddles(driver, dt, { playerIncoming = false, aiIn
   updatePaddlePose(driver.ai, { dt, incoming: aiIncoming, ballY: driver.ball.y });
 }
 
-export function updateReplayPaddles(driver, dt) {
-  updatePaddlePose(driver.player, { dt, replay: true });
-  updatePaddlePose(driver.ai, { dt, replay: true });
+export function updateReplayPaddles(driver, dt, { playerIncoming = false, aiIncoming = false } = {}) {
+  updatePaddlePose(driver.player, { dt, replay: true, incoming: playerIncoming, ballY: driver.ball.y });
+  updatePaddlePose(driver.ai, { dt, replay: true, incoming: aiIncoming, ballY: driver.ball.y });
 }
 
 export function updateBallVisuals(driver, dt) {
