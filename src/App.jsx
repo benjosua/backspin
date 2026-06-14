@@ -12,6 +12,7 @@ import { Actors } from './components/Actors.jsx';
 import { IntroMenu3D } from './components/IntroMenu3D.jsx';
 import { Hud, IntroOverlay, PointerCursor, ModePicker } from './components/Hud.jsx';
 import { DesktopOnlyGate } from './components/DesktopOnlyGate.jsx';
+import { MobileControls } from './components/MobileControls.jsx';
 import { useFrame, useThree } from '@react-three/fiber';
 
 const DebugPanel = DEBUG_MODE ? lazy(() => import('./components/DebugPanel.jsx')) : null;
@@ -139,6 +140,7 @@ export default function App() {
       {!DEBUG_MODE && <Hud />}
       {!DEBUG_MODE && <PointerCursor />}
       {!DEBUG_MODE && <ModePicker />}
+      {!DEBUG_MODE && <MobileControls />}
       {!DEBUG_MODE && <IntroOverlay />}
       </div>
     </DesktopOnlyGate>

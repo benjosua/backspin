@@ -36,6 +36,7 @@ export class PlayableDriver {
     this.charging = false; 
     this.charge = 0;
     this.chargeStartedAt = 0;
+    this.moveAxis = 0;
     this.usingKeys = false; 
     this.keys = { l: false, r: false }; 
     this.movePID = null; 
@@ -121,6 +122,10 @@ export class PlayableDriver {
       this.charging = false; 
       this.onChargeEnd();
     } 
+  }
+
+  setMoveAxis(axis = 0) {
+    this.moveAxis = clamp(Number(axis) || 0, -1, 1);
   }
 
   sideColor(side) { return side === 'p1' ? COLORS.player : COLORS.ai; }
@@ -210,7 +215,8 @@ export class PlayableDriver {
 
   updateInputState(dt, playerSpeed, camera) {
     updateAimFromCamera(this, camera);
-    const dir = Number(!!this.keys.r) - Number(!!this.keys.l);
+    const keyDir = Number(!!this.keys.r) - Number(!!this.keys.l);
+    const dir = Math.abs(this.moveAxis) > 0.05 ? this.moveAxis : keyDir;
     if (dir) {
       this.inputX = clamp(this.inputX + dir * 19 * playerSpeed * dt, -TABLE.halfWidth - NET.paddleInset, TABLE.halfWidth + NET.paddleInset);
     }

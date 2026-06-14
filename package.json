@@ -26,6 +26,7 @@
     "clsx": "^2.1.1",
     "leva": "^0.10.1",
     "lucide-react": "^1.18.0",
+    "nipplejs": "^1.0.4",
     "react": "latest",
     "react-dom": "latest",
     "shadcn": "^4.11.0",
