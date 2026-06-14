@@ -2,7 +2,7 @@ import { MathUtils, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { COLORS, TABLE } from './constants.js';
 import { damp } from './fx-state.js';
 import { syncCursorScreen as syncInputCursorScreen, setInputCallout } from './view-state.js';
-import { applyPointerVelocity, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
+import { applyPointerVelocity, MOVE_AXIS_DEADZONE, pointerEventToNdc, updateAimFromCamera } from './input-utils.js';
 import { initAudio } from './audio.js';
 import {
   applyGameplayFx,
@@ -216,7 +216,7 @@ export class PlayableDriver {
   updateInputState(dt, playerSpeed, camera) {
     updateAimFromCamera(this, camera);
     const keyDir = Number(!!this.keys.r) - Number(!!this.keys.l);
-    const dir = Math.abs(this.moveAxis) > 0.05 ? this.moveAxis : keyDir;
+    const dir = Math.abs(this.moveAxis) > MOVE_AXIS_DEADZONE ? this.moveAxis : keyDir;
     if (dir) {
       this.inputX = clamp(this.inputX + dir * 19 * playerSpeed * dt, -TABLE.halfWidth - NET.paddleInset, TABLE.halfWidth + NET.paddleInset);
     }

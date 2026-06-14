@@ -1,6 +1,7 @@
 import nipplejs from 'nipplejs';
 import { useEffect, useRef, useState } from 'react';
 import { getActiveGameDriver } from '../game-drivers.js';
+import { MOVE_AXIS_DEADZONE } from '../input-utils.js';
 import { useGameStore } from '../store.js';
 
 const coarseQuery = '(pointer: coarse)';
@@ -26,14 +27,14 @@ export function MobileControls() {
 
   useEffect(() => {
     const zone = zoneRef.current;
-    if (!enabled || !zone) return undefined;
+    if (!enabled || !zone) return;
     const manager = nipplejs.create({
       zone,
       mode: 'static',
       position: { left: '50%', top: '50%' },
       color: '#efe7d8',
       size: 112,
-      threshold: 0.05,
+      threshold: MOVE_AXIS_DEADZONE,
     });
     const applyAxis = (axis) => {
       getActiveGameDriver().setMoveAxis?.(axis);

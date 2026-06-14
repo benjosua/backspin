@@ -1,6 +1,7 @@
 import { aimDepthToTargetZ, aimXToTargetX, targetXToAimX, targetZToAimDepth } from '../shared/backspin-core.js';
 
 const clampUnit = (value) => Math.max(-1, Math.min(1, value));
+export const MOVE_AXIS_DEADZONE = 0.05;
 
 const browserNeedsPointerScale = (() => {
   if (typeof navigator === 'undefined') return false;
