@@ -4,6 +4,7 @@ import { getActiveGameDriver } from '../game-drivers.js';
 import { useGameStore } from '../store.js';
 
 const coarseQuery = '(pointer: coarse)';
+const JOYSTICK_SIZE = 112;
 
 function isCoarsePointer() {
   return typeof window !== 'undefined' && window.matchMedia(coarseQuery).matches;
@@ -32,7 +33,7 @@ export function MobileControls() {
       mode: 'static',
       position: { left: '50%', top: '50%' },
       color: '#efe7d8',
-      size: 112,
+      size: JOYSTICK_SIZE,
     });
     const applyAxis = (axis) => {
       getActiveGameDriver().setMoveAxis?.(axis);
@@ -56,7 +57,7 @@ export function MobileControls() {
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[10003]" aria-hidden>
-      <div className="pointer-events-auto absolute bottom-5 left-5 size-32 rounded-full touch-none" ref={zoneRef} />
+      <div className="pointer-events-auto absolute bottom-5 left-5 rounded-full touch-none" style={{ width: JOYSTICK_SIZE, height: JOYSTICK_SIZE }} ref={zoneRef} />
     </div>
   );
 }
