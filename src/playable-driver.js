@@ -128,6 +128,11 @@ export class PlayableDriver {
     this.moveAxis = clamp(Number(axis) || 0, -1, 1);
   }
 
+  getMoveDirection() {
+    if (Math.abs(this.moveAxis) > MOVE_AXIS_DEADZONE) return this.moveAxis;
+    return Number(!!this.keys.r) - Number(!!this.keys.l);
+  }
+
   sideColor(side) { return side === 'p1' ? COLORS.player : COLORS.ai; }
 
   winnerIsLocal(side) { return side === 'p1'; }
@@ -215,8 +220,7 @@ export class PlayableDriver {
 
   updateInputState(dt, playerSpeed, camera) {
     updateAimFromCamera(this, camera);
-    const keyDir = Number(!!this.keys.r) - Number(!!this.keys.l);
-    const dir = Math.abs(this.moveAxis) > MOVE_AXIS_DEADZONE ? this.moveAxis : keyDir;
+    const dir = this.getMoveDirection();
     if (dir) {
       this.inputX = clamp(this.inputX + dir * 19 * playerSpeed * dt, -TABLE.halfWidth - NET.paddleInset, TABLE.halfWidth + NET.paddleInset);
     }

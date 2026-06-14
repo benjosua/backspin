@@ -1,7 +1,6 @@
 import nipplejs from 'nipplejs';
 import { useEffect, useRef, useState } from 'react';
 import { getActiveGameDriver } from '../game-drivers.js';
-import { MOVE_AXIS_DEADZONE } from '../input-utils.js';
 import { useGameStore } from '../store.js';
 
 const coarseQuery = '(pointer: coarse)';
@@ -34,14 +33,13 @@ export function MobileControls() {
       position: { left: '50%', top: '50%' },
       color: '#efe7d8',
       size: 112,
-      threshold: MOVE_AXIS_DEADZONE,
     });
     const applyAxis = (axis) => {
       getActiveGameDriver().setMoveAxis?.(axis);
     };
     const onMove = (_evt, data) => {
       const x = data?.vector?.x || 0;
-      const strength = Math.min(1, data?.force || 0);
+      const strength = data?.force || 0;
       applyAxis(x * strength);
     };
     const onEnd = () => applyAxis(0);
