@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+serve/node_modules/
+
+# builds
+dist/
+serve/build/
+
+# environment
+.env
+.env.*
+!.env.example
+serve/.env
+serve/.env.*
+!serve/.env.example
+
+# OS / logs
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Colyseus local
+.colyseus-cloud.json
+.devmode.json
+serve/.colyseus-cloud.json
+serve/.devmode.json
+core
+core.*
+

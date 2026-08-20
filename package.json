@@ -1,0 +1,72 @@
+{
+  "name": "backspin",
+  "version": "1.0.0",
+  "description": "Fast-paced 3D multiplayer table tennis game with client prediction, ranked matchmaking, and instant replays",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benjosua/backspin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/benjosua/backspin/issues"
+  },
+  "homepage": "https://github.com/benjosua/backspin#readme",
+  "keywords": [
+    "table-tennis",
+    "ping-pong",
+    "threejs",
+    "react-three-fiber",
+    "colyseus",
+    "multiplayer",
+    "game",
+    "websockets",
+    "ranked",
+    "elo",
+    "replays"
+  ],
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "docker:build": "npm run docker:prod:build",
+    "docker:run": "npm run docker:prod:run",
+    "docker:up": "npm run docker:dev",
+    "server:build": "npm --prefix serve run build",
+    "server:test": "npm --prefix serve test",
+    "client:test": "node --test test/*.test.js",
+    "sim:start": "npm --prefix serve run sim:start",
+    "sim:start:prod": "npm --prefix serve run sim:start:prod",
+    "sim:cleanup": "npm --prefix serve run sim:cleanup --",
+    "check": "npm run client:test && npm run build && npm run server:build && npm run server:test",
+    "docker:dev": "docker compose up --watch --build",
+    "docker:prod:build": "docker build --target runtime -t backspin .",
+    "docker:prod:run": "docker run --rm -p 2567:2567 backspin"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.5.0",
+    "@colyseus/sdk": "^0.17.42",
+    "@fontsource-variable/inter": "^5.2.8",
+    "@react-three/drei": "latest",
+    "@react-three/fiber": "latest",
+    "@tailwindcss/vite": "^4.3.0",
+    "@vitejs/plugin-react": "latest",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.18.0",
+    "next-themes": "^0.4.6",
+    "react": "latest",
+    "react-dom": "latest",
+    "shadcn": "^4.11.0",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.0",
+    "three": "latest",
+    "troika-three-text": "latest",
+    "tw-animate-css": "^1.4.0",
+    "typeface-montserrat": "^1.1.13",
+    "vite": "latest",
+    "zustand": "^5.0.14"
+  }
+}

@@ -1,0 +1,14 @@
+node_modules
+serve/node_modules
+dist
+serve/build
+.git
+.gsd
+.vscode
+.idea
+.DS_Store
+npm-debug.log*
+*.log
+.env*
+coverage
+

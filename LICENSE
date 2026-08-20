@@ -1,0 +1,41 @@
+# Backspin License Notice
+
+Original Backspin source code, documentation, backend server architecture, client prediction engine, simulation algorithms, and other project-created content are licensed under the **MIT License** (see [LICENSES/MIT.txt](./LICENSES/MIT.txt)).
+
+You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the software under the terms of the MIT License.
+
+---
+
+### Third-Party Assets & Recovered Components
+
+Backspin bundles and adapts third-party assets, fonts, vendor packages, and recovered shader/audio routines. These components retain their original licenses and copyrights:
+
+- **Shaders & WebAudio:** Adapted and recovered procedural WebAudio sound engine (`src/audio.js`) and custom GLSL shaders (`src/shaders.js`).
+- **Fonts:** Montserrat (OFL 1.1) and Inter (OFL 1.1).
+- **Vendor Packages:** Troika three-text unicode font resolver metadata (Apache 2.0).
+
+Please see [CREDITS.md](./CREDITS.md) for a detailed list of third-party assets, sources, and full attribution.
+
+---
+
+## MIT License
+
+Copyright (c) 2026 Ben Josua and Backspin Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

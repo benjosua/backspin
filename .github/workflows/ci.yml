@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: backspin
+          POSTGRES_PASSWORD: backspin
+          POSTGRES_DB: backspin_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_PAT || github.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install server dependencies
+        run: npm --prefix serve ci
+
+      - name: Run client tests
+        run: npm run client:test
+
+      - name: Build client bundle
+        run: npm run build
+
+      - name: Build server TypeScript
+        run: npm run server:build
+
+      - name: Run server test suite
+        env:
+          DATABASE_URL: postgres://backspin:backspin@localhost:5432/backspin_test
+        run: npm run server:test
+

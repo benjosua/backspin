@@ -1,0 +1,217 @@
+services:
+  client:
+    build:
+      context: .
+      target: client-dev
+    ports:
+      - "5173:5173"
+    environment:
+      NODE_ENV: development
+      VITE_COLYSEUS_URL: http://localhost:2567
+      CHOKIDAR_USEPOLLING: "true"
+      NODE_OPTIONS: --max-old-space-size=1024
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./serve/src/shared:/app/serve/src/shared
+      - ./index.html:/app/index.html
+      - ./vite.config.js:/app/vite.config.js
+      - ./jsconfig.json:/app/jsconfig.json
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src
+          initial_sync: true
+        - action: sync
+          path: ./public
+          target: /app/public
+          initial_sync: true
+        - action: sync
+          path: ./serve/src/shared
+          target: /app/serve/src/shared
+          initial_sync: true
+        - action: sync+restart
+          path: ./index.html
+          target: /app/index.html
+        - action: sync+restart
+          path: ./vite.config.js
+          target: /app/vite.config.js
+        - action: sync+restart
+          path: ./jsconfig.json
+          target: /app/jsconfig.json
+        - action: rebuild
+          path: ./package.json
+        - action: rebuild
+          path: ./package-lock.json
+    restart: unless-stopped
+    init: true
+    mem_limit: 1024m
+    cpus: 1.0
+
+  server:
+    build:
+      context: .
+      target: server-dev
+    ports:
+      - "2567:2567"
+    environment:
+      NODE_ENV: development
+      PORT: 2567
+      DATABASE_URL: postgres://backspin:backspin@postgres:5432/backspin
+      AUTH_SALT: change-me-auth-salt
+      JWT_SECRET: change-me-jwt-secret
+      SESSION_SECRET: change-me-session-secret
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@localhost}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5173}
+      CHOKIDAR_USEPOLLING: "true"
+      NODE_OPTIONS: --max-old-space-size=512
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+    volumes:
+      - ./serve/src:/app/serve/src
+      - ./serve/scripts:/app/serve/scripts
+      - ./serve/tsconfig.json:/app/serve/tsconfig.json
+      - ./serve/tsconfig.build.json:/app/serve/tsconfig.build.json
+    develop:
+      watch:
+        - action: sync
+          path: ./serve/src
+          target: /app/serve/src
+          initial_sync: true
+        - action: sync
+          path: ./serve/scripts
+          target: /app/serve/scripts
+          initial_sync: true
+        - action: sync+restart
+          path: ./serve/tsconfig.json
+          target: /app/serve/tsconfig.json
+        - action: sync+restart
+          path: ./serve/tsconfig.build.json
+          target: /app/serve/tsconfig.build.json
+        - action: rebuild
+          path: ./serve/package.json
+        - action: rebuild
+          path: ./serve/package-lock.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:' + (process.env.PORT || 2567) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    init: true
+    mem_limit: 768m
+    cpus: 1.0
+
+  simulated-players:
+    build:
+      context: .
+      target: server-dev
+    command: npm run sim:start
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://backspin:backspin@postgres:5432/backspin
+      SIM_SERVER_URL: http://server:2567
+      SIM_PLAYER_PASSWORD: ${SIM_PLAYER_PASSWORD:-change-me-sim-player-password}
+      SIM_PLAYER_COUNT: ${SIM_PLAYER_COUNT:-20}
+      SIM_MIN_ONLINE: ${SIM_MIN_ONLINE:-5}
+      SIM_MAX_ONLINE: ${SIM_MAX_ONLINE:-20}
+      SIM_CASUAL_WAITERS: ${SIM_CASUAL_WAITERS:-3}
+      SIM_RANKED_WAITERS: ${SIM_RANKED_WAITERS:-1}
+      NODE_OPTIONS: --max-old-space-size=384
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+    volumes:
+      - ./serve/src:/app/serve/src
+      - ./serve/tsconfig.json:/app/serve/tsconfig.json
+      - ./serve/tsconfig.build.json:/app/serve/tsconfig.build.json
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./serve/src/simulated-players
+          target: /app/serve/src/simulated-players
+        - action: sync+restart
+          path: ./serve/src/shared
+          target: /app/serve/src/shared
+        - action: rebuild
+          path: ./serve/package.json
+        - action: rebuild
+          path: ./serve/package-lock.json
+
+    depends_on:
+      server:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    mem_limit: 512m
+    cpus: 0.75
+
+  postgres:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=20
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: backspin
+      POSTGRES_PASSWORD: backspin
+      POSTGRES_DB: backspin
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U backspin -d backspin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    cpus: 0.5
+
+  postgres-test:
+    image: postgres:16-alpine
+    profiles: ["test"]
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=20
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: backspin
+      POSTGRES_PASSWORD: backspin
+      POSTGRES_DB: backspin_test
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U backspin -d backspin_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    cpus: 0.5
+
+volumes:
+  postgres-data:
+  postgres-test-data:
